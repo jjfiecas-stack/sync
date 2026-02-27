@@ -3,11 +3,9 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
-
 permissions:
   packages: write
   contents: write
-
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -15,7 +13,6 @@ jobs:
       matrix: ${{ steps.check.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Check for upstream changes
         id: check
         run: |
@@ -23,17 +20,20 @@ jobs:
           REPOS[yastream]="https://api.github.com/repos/hoangtamthai/yastream/commits/dev"
           REPOS[sootio-stremio-addon]="https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"
           REPOS[nuvio-streams-addon]="https://api.github.com/repos/tapframe/NuvioStreamsAddon/commits/master"
-
           SHA_FILE=".last_shas"
           touch $SHA_FILE
-
           INCLUDES="[]"
-
           for NAME in "${!REPOS[@]}"; do
             URL="${REPOS[$NAME]}"
-            LATEST_SHA=$(curl -s "$URL" | jq -r '.sha')
+            LATEST_SHA=$(curl -s \
+              -H "User-Agent: github-actions" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "$URL" | jq -r '.sha // empty')
+            if [ -z "$LATEST_SHA" ]; then
+              echo "Failed to fetch SHA for $NAME, skipping"
+              continue
+            fi
             STORED_SHA=$(grep "^$NAME=" $SHA_FILE | cut -d= -f2)
-
             if [ "$LATEST_SHA" != "$STORED_SHA" ]; then
               echo "$NAME has new commits, adding to build matrix"
               case $NAME in
@@ -47,7 +47,6 @@ jobs:
                   INCLUDES=$(echo $INCLUDES | jq ". + [{\"name\":\"nuvio-streams-addon\",\"context\":\"https://github.com/tapframe/NuvioStreamsAddon.git#master\",\"platforms\":\"linux/amd64,linux/arm64\"}]")
                   ;;
               esac
-              # Update stored SHA
               if grep -q "^$NAME=" $SHA_FILE; then
                 sed -i "s/^$NAME=.*/$NAME=$LATEST_SHA/" $SHA_FILE
               else
@@ -57,9 +56,7 @@ jobs:
               echo "$NAME has no new commits, skipping"
             fi
           done
-
           echo "matrix={\"include\":$INCLUDES}" >> $GITHUB_OUTPUT
-
       - name: Commit SHA file
         run: |
           git config user.name "github-actions"
@@ -67,7 +64,6 @@ jobs:
           git add .last_shas
           git diff --staged --quiet || git commit -m "Update last SHAs [skip ci]"
           git push
-
   build:
     runs-on: ubuntu-latest
     needs: check
@@ -93,7 +89,6 @@ jobs:
           push: true
           tags: ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
           no-cache: true
-
   cleanup:
     runs-on: ubuntu-latest
     needs: build
