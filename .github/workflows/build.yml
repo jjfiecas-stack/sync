@@ -43,3 +43,20 @@ jobs:
           push: true
           tags: ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
           no-cache: true
+
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [yastream, sootio-stremio-addon, nuvio-streams-addon]
+    steps:
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ matrix.package }}
+          package-type: container
+          min-versions-to-keep: 2
+          delete-only-untagged-versions: true
