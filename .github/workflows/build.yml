@@ -38,13 +38,13 @@ jobs:
               echo "$NAME has new commits, adding to build matrix"
               case $NAME in
                 yastream)
-                  INCLUDES=$(echo $INCLUDES | jq ". + [{\"name\":\"yastream\",\"context\":\"https://github.com/hoangtamthai/yastream.git#main\",\"platforms\":\"linux/amd64,linux/arm64\"}]")
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"yastream","context":"https://github.com/hoangtamthai/yastream.git#dev","platforms":"linux/amd64,linux/arm64"}]')
                   ;;
                 sootio-stremio-addon)
-                  INCLUDES=$(echo $INCLUDES | jq ". + [{\"name\":\"sootio-stremio-addon\",\"context\":\"https://github.com/sooti/sootio-stremio-addon.git#main\",\"platforms\":\"linux/amd64\"}]")
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/amd64"}]')
                   ;;
                 nuvio-streams-addon)
-                  INCLUDES=$(echo $INCLUDES | jq ". + [{\"name\":\"nuvio-streams-addon\",\"context\":\"https://github.com/tapframe/NuvioStreamsAddon.git#master\",\"platforms\":\"linux/amd64,linux/arm64\"}]")
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/amd64,linux/arm64"}]')
                   ;;
               esac
               if grep -q "^$NAME=" $SHA_FILE; then
@@ -56,8 +56,9 @@ jobs:
               echo "$NAME has no new commits, skipping"
             fi
           done
-          echo "matrix={\"include\":$INCLUDES}" >> $GITHUB_OUTPUT
-          echo "{\"include\":$INCLUDES}" >> $GITHUB_OUTPUT
+          MATRIX=$(jq -cn --argjson includes "$INCLUDES" '{"include":$includes}')
+          echo "matrix<<EOF" >> $GITHUB_OUTPUT
+          echo "$MATRIX" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
       - name: Commit SHA file
         run: |
