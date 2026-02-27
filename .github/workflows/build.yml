@@ -58,7 +58,7 @@ jobs:
                   INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"yastream","context":"https://github.com/hoangtamthai/yastream.git#dev","platforms":"linux/amd64,linux/arm64"}]')
                   ;;
                 sootio-stremio-addon)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/amd64"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/amd64, linux/arm64"}]')
                   ;;
                 nuvio-streams-addon)
                   INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/amd64,linux/arm64"}]')
