@@ -1,0 +1,32 @@
+name: Build images
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: yastream
+            context: https://github.com/hoangtamthai/yastream.git
+          - name: sootio-stremio-addon
+            context: https://github.com/sooti/sootio-stremio-addon.git
+          - name: nuvio-streams-addon
+            context: https://github.com/tapframe/NuvioStreamsAddon.git
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:latest
+          no-cache: true
