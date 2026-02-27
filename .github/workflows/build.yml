@@ -17,10 +17,7 @@ jobs:
 
       - uses: docker/build-push-action@v5
         with:
-          context: "{{defaultContext}}:."
-          build-args: |
+          context: "https://github.com/hoangtamthai/yastream.git"
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/yastream:latest
           no-cache: true
-          # build directly from upstream
-          context: https://github.com/hoangtamthai/yastream.git
