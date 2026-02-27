@@ -1,0 +1,26 @@
+name: Build yastream
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: "{{defaultContext}}:."
+          build-args: |
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/yastream:latest
+          no-cache: true
+          # build directly from upstream
+          context: https://github.com/hoangtamthai/yastream.git
