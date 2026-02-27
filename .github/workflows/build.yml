@@ -57,6 +57,8 @@ jobs:
             fi
           done
           echo "matrix={\"include\":$INCLUDES}" >> $GITHUB_OUTPUT
+          echo "{\"include\":$INCLUDES}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
       - name: Commit SHA file
         run: |
           git config user.name "github-actions"
