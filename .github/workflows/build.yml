@@ -12,7 +12,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: yastream
