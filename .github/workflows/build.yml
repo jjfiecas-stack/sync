@@ -20,7 +20,7 @@ jobs:
         id: check
         run: |
           declare -A REPOS
-          REPOS[yastream]="https://api.github.com/repos/hoangtamthai/yastream/commits/main"
+          REPOS[yastream]="https://api.github.com/repos/hoangtamthai/yastream/commits/dev"
           REPOS[sootio-stremio-addon]="https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"
           REPOS[nuvio-streams-addon]="https://api.github.com/repos/tapframe/NuvioStreamsAddon/commits/master"
 
