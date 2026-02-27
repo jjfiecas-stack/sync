@@ -55,13 +55,13 @@ jobs:
               echo "$NAME has new commits, adding to build matrix"
               case $NAME in
                 yastream)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"yastream","context":"https://github.com/hoangtamthai/yastream.git#dev","platforms":"linux/amd64,linux/arm64"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"yastream","context":"https://github.com/hoangtamthai/yastream.git#dev","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
                   ;;
                 sootio-stremio-addon)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/amd64, linux/arm64"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
                   ;;
                 nuvio-streams-addon)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/amd64,linux/arm64"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
                   ;;
               esac
 
@@ -121,7 +121,9 @@ jobs:
           context: ${{ matrix.context }}
           platforms: ${{ matrix.platforms }}
           push: true
-          tags: ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
+          tags: |
+            ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
+            ghcr.io/jjfiecas-stack/${{ matrix.name }}:${{ matrix.sha }}
 
   cleanup:
     runs-on: ubuntu-latest
