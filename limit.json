@@ -1,1 +1,11 @@
-[{"Name":"Global Result Limit: 6","Expression":"slice(negate(merge(library(streams), cached(seadex(streams))), streams), 6)"}]
+{
+  "metadata": {
+    "name": "globalResultLimit",
+    "author": "jjfiecas-stack",
+    "description": "Global Result Limit expression",
+    "version": "1.0.0"
+  },
+  "values": [
+    "/*Global Result Limit: 6*/slice(negate(merge(library(streams), cached(seadex(streams))), streams), 6)"
+  ]
+}
