@@ -30,7 +30,6 @@ jobs:
           declare -A REPOS
           REPOS[yastream]="https://api.github.com/repos/hoangtamthai/yastream/commits/dev"
           REPOS[sootio-stremio-addon]="https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"
-          REPOS[nuvio-streams-addon]="https://api.github.com/repos/tapframe/NuvioStreamsAddon/commits/master"
 
           SHA_FILE=".last_shas"
           touch $SHA_FILE
@@ -59,9 +58,6 @@ jobs:
                   ;;
                 sootio-stremio-addon)
                   INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
-                  ;;
-                nuvio-streams-addon)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
                   ;;
               esac
 
