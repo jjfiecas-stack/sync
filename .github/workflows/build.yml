@@ -73,7 +73,7 @@ jobs:
                   INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
                   ;;
                 hdhub)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://${{ secrets.PAT }}@github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
                   ;;
               esac
 
@@ -131,6 +131,10 @@ jobs:
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
+
+      - name: Configure git credentials for private repos
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.PAT }}@github.com/TheVolecitor/".insteadOf "https://github.com/TheVolecitor/"
 
       - uses: docker/build-push-action@v5
         with:
