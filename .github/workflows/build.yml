@@ -31,6 +31,7 @@ jobs:
           REPOS[yastream]="https://api.github.com/repos/hoangtamthai/yastream/commits/dev"
           REPOS[sootio-stremio-addon]="https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"
           REPOS[nuvio-streams-addon]="https://api.github.com/repos/tapframe/NuvioStreamsAddon/commits/master"
+          REPOS[hdhub]="https://api.github.com/repos/TheVolecitor/hdhub/commits/main"
 
           SHA_FILE=".last_shas"
           touch $SHA_FILE
@@ -38,10 +39,19 @@ jobs:
 
           for NAME in "${!REPOS[@]}"; do
             URL="${REPOS[$NAME]}"
-            LATEST_SHA=$(curl -s \
-              -H "User-Agent: github-actions" \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "$URL" | jq -r '.sha // empty')
+
+            # hdhub is a private external repo — use PAT with repo scope
+            if [ "$NAME" = "hdhub" ]; then
+              LATEST_SHA=$(curl -s \
+                -H "User-Agent: github-actions" \
+                -H "Authorization: Bearer ${{ secrets.PAT }}" \
+                "$URL" | jq -r '.sha // empty')
+            else
+              LATEST_SHA=$(curl -s \
+                -H "User-Agent: github-actions" \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "$URL" | jq -r '.sha // empty')
+            fi
 
             if [ -z "$LATEST_SHA" ]; then
               echo "Failed to fetch SHA for $NAME, skipping"
@@ -62,6 +72,9 @@ jobs:
                   ;;
                 nuvio-streams-addon)
                   INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
+                  ;;
+                hdhub)
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
                   ;;
               esac
 
