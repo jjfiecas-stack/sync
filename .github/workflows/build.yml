@@ -150,6 +150,7 @@ jobs:
           COPY package*.json ./
           RUN npm ci --omit=dev
           COPY . .
+          RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js
           EXPOSE 7000
           CMD ["node", "server.js"]
           EOF
