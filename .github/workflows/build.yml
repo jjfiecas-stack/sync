@@ -141,6 +141,19 @@ jobs:
           token: ${{ secrets.PAT }}
           path: _source
 
+      - name: Write Dockerfile for hdhub
+        if: ${{ matrix.private == 'true' }}
+        run: |
+          cat > _source/Dockerfile << 'EOF'
+          FROM node:20-alpine
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci --omit=dev
+          COPY . .
+          EXPOSE 7000
+          CMD ["node", "server.js"]
+          EOF
+
       - uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.private == 'true' && '_source' || matrix.context }}
