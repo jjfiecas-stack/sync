@@ -74,7 +74,7 @@ jobs:
                   INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
                   ;;
                 hdhub)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://${{ secrets.PAT }}@github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
                   ;;
               esac
 
