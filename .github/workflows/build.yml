@@ -64,16 +64,16 @@ jobs:
               echo "$NAME has new commits, adding to build matrix"
               case $NAME in
                 yastream)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"yastream","context":"https://github.com/hoangtamthai/yastream.git#dev","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"yastream","context":"https://github.com/hoangtamthai/yastream.git#dev","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false"}]')
                   ;;
                 sootio-stremio-addon)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false"}]')
                   ;;
                 nuvio-streams-addon)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false"}]')
                   ;;
                 hdhub)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"true"}]')
                   ;;
               esac
 
@@ -132,13 +132,18 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Configure git credentials for private repos
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.PAT }}@github.com/TheVolecitor/".insteadOf "https://github.com/TheVolecitor/"
+      - name: Checkout private repo
+        if: ${{ matrix.private == 'true' }}
+        uses: actions/checkout@v5
+        with:
+          repository: TheVolecitor/hdhub
+          ref: main
+          token: ${{ secrets.PAT }}
+          path: _source
 
       - uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.context }}
+          context: ${{ matrix.private == 'true' && '_source' || matrix.context }}
           platforms: ${{ matrix.platforms }}
           push: true
           tags: |
