@@ -32,6 +32,7 @@ jobs:
           REPOS[sootio-stremio-addon]="https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"
           REPOS[nuvio-streams-addon]="https://api.github.com/repos/tapframe/NuvioStreamsAddon/commits/master"
           REPOS[hdhub]="https://api.github.com/repos/TheVolecitor/hdhub/commits/main"
+          REPOS[webstreamr-mbg]="https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"
 
           SHA_FILE=".last_shas"
           touch $SHA_FILE
@@ -74,6 +75,9 @@ jobs:
                   ;;
                 hdhub)
                   INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"true"}]')
+                  ;;
+                webstreamr-mbg)
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"webstreamr-mbg","context":"https://github.com/newman2x/WebStreamrMBG.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false"}]')
                   ;;
               esac
 
