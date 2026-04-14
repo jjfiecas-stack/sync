@@ -167,6 +167,19 @@ jobs:
           ref: main
           path: _source
 
+      - name: Write Dockerfile for webstreamr-mbg
+        if: ${{ matrix.name == 'webstreamr-mbg' }}
+        run: |
+          cat > _source/Dockerfile << 'EOF'
+          FROM node:20-alpine
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci --omit=dev
+          COPY . .
+          EXPOSE 7000
+          CMD ["node", "server.js"]
+          EOF
+
       - uses: docker/build-push-action@v5
         with:
           context: ${{ (matrix.private == 'true' || matrix.checkout == 'true') && '_source' || matrix.context }}
