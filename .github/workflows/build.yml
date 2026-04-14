@@ -65,19 +65,19 @@ jobs:
               echo "$NAME has new commits, adding to build matrix"
               case $NAME in
                 yastream)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"yastream","context":"https://github.com/hoangtamthai/yastream.git#dev","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"yastream","context":"https://github.com/hoangtamthai/yastream.git#dev","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false","checkout":"false"}]')
                   ;;
                 sootio-stremio-addon)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"sootio-stremio-addon","context":"https://github.com/sooti/sootio-stremio-addon.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false","checkout":"false"}]')
                   ;;
                 nuvio-streams-addon)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"nuvio-streams-addon","context":"https://github.com/tapframe/NuvioStreamsAddon.git#master","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false","checkout":"false"}]')
                   ;;
                 hdhub)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"true"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"hdhub","context":"https://github.com/TheVolecitor/hdhub.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"true","checkout":"false"}]')
                   ;;
                 webstreamr-mbg)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"webstreamr-mbg","context":"https://github.com/newman2x/WebStreamrMBG.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false"}]')
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"webstreamr-mbg","context":"https://github.com/newman2x/WebStreamrMBG.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false","checkout":"true"}]')
                   ;;
               esac
 
@@ -159,9 +159,17 @@ jobs:
           CMD ["node", "server.js"]
           EOF
 
+      - name: Checkout public repo for local build
+        if: ${{ matrix.checkout == 'true' }}
+        uses: actions/checkout@v5
+        with:
+          repository: newman2x/WebStreamrMBG
+          ref: main
+          path: _source
+
       - uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.private == 'true' && '_source' || matrix.context }}
+          context: ${{ (matrix.private == 'true' || matrix.checkout == 'true') && '_source' || matrix.context }}
           platforms: ${{ matrix.platforms }}
           push: true
           tags: |
