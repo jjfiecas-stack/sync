@@ -176,10 +176,9 @@ jobs:
           COPY package*.json ./
           RUN npm ci --omit=dev
           COPY . .
-          EXPOSE 7000
+          EXPOSE 51546
           CMD ["node", "index.js"]
           EOF
-
 
       - uses: docker/build-push-action@v5
         with:
