@@ -19,7 +19,7 @@ jobs:
     outputs:
       matrix: ${{ steps.check.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -33,6 +33,7 @@ jobs:
           REPOS[nuvio-streams-addon]="https://api.github.com/repos/tapframe/NuvioStreamsAddon/commits/master"
           REPOS[hdhub]="https://api.github.com/repos/TheVolecitor/hdhub/commits/main"
           REPOS[webstreamr-mbg]="https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"
+          REPOS[zilean]="https://api.github.com/repos/AyushSehrawat/zilean/commits/main"
 
           SHA_FILE=".last_shas"
           touch $SHA_FILE
@@ -78,6 +79,9 @@ jobs:
                   ;;
                 webstreamr-mbg)
                   INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"webstreamr-mbg","context":"https://github.com/newman2x/WebStreamrMBG.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false","checkout":"true"}]')
+                  ;;
+                zilean)
+                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"zilean","context":"https://github.com/AyushSehrawat/zilean.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false","checkout":"false"}]')
                   ;;
               esac
 
@@ -138,7 +142,7 @@ jobs:
 
       - name: Checkout private repo
         if: ${{ matrix.private == 'true' }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           repository: TheVolecitor/hdhub
           ref: main
@@ -161,7 +165,7 @@ jobs:
 
       - name: Checkout public repo for local build
         if: ${{ matrix.checkout == 'true' }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           repository: newman2x/WebStreamrMBG
           ref: main
@@ -190,7 +194,7 @@ jobs:
           CMD ["node", "dist/index.js"]
           EOF
 
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           context: ${{ (matrix.private == 'true' || matrix.checkout == 'true') && '_source' || matrix.context }}
           platforms: ${{ matrix.platforms }}
