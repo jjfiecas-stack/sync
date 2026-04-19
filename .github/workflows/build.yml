@@ -32,7 +32,6 @@ jobs:
           REPOS[sootio-stremio-addon]="https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"
           REPOS[hdhub]="https://api.github.com/repos/TheVolecitor/hdhub/commits/main"
           REPOS[webstreamr-mbg]="https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"
-          REPOS[zilean]="https://api.github.com/repos/AyushSehrawat/zilean/commits/main"
 
           SHA_FILE=".last_shas"
           touch $SHA_FILE
@@ -75,9 +74,6 @@ jobs:
                   ;;
                 webstreamr-mbg)
                   INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"webstreamr-mbg","context":"https://github.com/newman2x/WebStreamrMBG.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false","checkout":"true"}]')
-                  ;;
-                zilean)
-                  INCLUDES=$(echo "$INCLUDES" | jq -c '. + [{"name":"zilean","context":"https://github.com/AyushSehrawat/zilean.git#main","platforms":"linux/arm64","sha":"'"$LATEST_SHA"'","private":"false","checkout":"false"}]')
                   ;;
               esac
 
