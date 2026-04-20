@@ -45,10 +45,10 @@ jobs:
 
           # Fetch all SHAs in parallel
           declare -A PIDS RESULTS
-          fetch_sha "yastream"           "https://api.github.com/repos/hoangtamthai/yastream/commits/dev"                  "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_yastream &
-          fetch_sha "sootio-stremio-addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"          "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio &
-          fetch_sha "hdhub"              "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"                    "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
-          fetch_sha "webstreamr-mbg"     "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"                "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr &
+          fetch_sha "yastream"           "https://api.github.com/repos/hoangtamthai/yastream/commits/dev"               "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_yastream &
+          fetch_sha "sootio-stremio-addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"       "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
+          fetch_sha "hdhub"              "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"                 "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
+          fetch_sha "webstreamr-mbg"     "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"             "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr_mbg &
           wait
 
           process_repo() {
@@ -56,9 +56,10 @@ jobs:
             local PRIVATE="$2"
             local CHECKOUT="$3"
             local CONTEXT="$4"
+            local SAFE_NAME="${NAME//[^a-z0-9]/_}"
 
             local RESULT
-            RESULT=$(cat /tmp/sha_${NAME//[^a-z0-9]/_} 2>/dev/null || true)
+            RESULT=$(cat /tmp/sha_${SAFE_NAME} 2>/dev/null || true)
             local LATEST_SHA="${RESULT#* }"
 
             if [ -z "$LATEST_SHA" ]; then
