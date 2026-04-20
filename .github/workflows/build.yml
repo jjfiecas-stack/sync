@@ -205,7 +205,6 @@ jobs:
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:${{ matrix.sha }}
           cache-from: type=registry,ref=ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
-          cache-to: type=inline
 
   cleanup:
     runs-on: ubuntu-latest
