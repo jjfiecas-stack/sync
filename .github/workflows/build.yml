@@ -207,13 +207,14 @@ jobs:
 
   cleanup:
     runs-on: ubuntu-latest
-    needs: [check, build]
-    if: ${{ needs.check.outputs.matrix != '' && fromJson(needs.check.outputs.matrix).include[0] != null }}
+    needs: check
+    if: always()
     permissions:
       packages: write
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.check.outputs.matrix) }}
+      matrix:
+        name: [yastream, sootio-stremio-addon, hdhub, webstreamr-mbg]
     steps:
       - uses: actions/delete-package-versions@v5
         with:
