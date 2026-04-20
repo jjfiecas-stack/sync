@@ -201,6 +201,7 @@ jobs:
           context: ${{ (matrix.private == 'true' || matrix.checkout == 'true') && '_source' || matrix.context }}
           platforms: ${{ matrix.platforms }}
           push: true
+          provenance: false
           tags: |
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:${{ matrix.sha }}
