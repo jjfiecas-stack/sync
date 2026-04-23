@@ -48,11 +48,11 @@ jobs:
 
           # Fetch all SHAs in parallel
           declare -A PIDS RESULTS
-          fetch_sha "yastream"           "https://api.github.com/repos/hoangtamthai/yastream/commits/dev"               "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_yastream &
-          fetch_sha "sootio-stremio-addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"       "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
-          fetch_sha "hdhub"              "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"                 "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
-          fetch_sha "webstreamr-mbg"     "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"             "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr_mbg &
-          fetch_sha "zilean"             "https://api.github.com/repos/AyushSehrawat/zilean/commits/main"               "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_zilean &
+          fetch_sha "yastream"             "https://api.github.com/repos/hoangtamthai/yastream/commits/dev"           "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_yastream &
+          fetch_sha "sootio-stremio-addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"     "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
+          fetch_sha "hdhub"                "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"             "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
+          fetch_sha "webstreamr-mbg"       "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"         "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr_mbg &
+          fetch_sha "zilean"               "https://api.github.com/repos/AyushSehrawat/zilean/commits/main"           "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_zilean &
           wait
 
           process_repo() {
@@ -96,7 +96,7 @@ jobs:
             fi
           }
 
-          process_repo "yastream"             "false" "false" "https://github.com/hoangtamthai/yastream.git#dev"
+          process_repo "yastream"             "false" "true"  "https://github.com/hoangtamthai/yastream.git#dev"
           process_repo "sootio-stremio-addon" "false" "false" "https://github.com/sooti/sootio-stremio-addon.git#main"
           process_repo "hdhub"               "true"  "false" "https://github.com/TheVolecitor/hdhub.git#main"
           process_repo "webstreamr-mbg"       "false" "true"  "https://github.com/newman2x/WebStreamrMBG.git#main"
@@ -144,6 +144,19 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
+      - name: Checkout yastream
+        if: ${{ matrix.name == 'yastream' }}
+        uses: actions/checkout@v5
+        with:
+          repository: hoangtamthai/yastream
+          ref: dev
+          path: _source
+
+      - name: Patch Dockerfile for yastream
+        if: ${{ matrix.name == 'yastream' }}
+        run: |
+          sed -i '/COPY --from=builder \/app\/data/a COPY --from=builder /app/drizzle ./drizzle' _source/Dockerfile
+
       - name: Checkout private repo
         if: ${{ matrix.private == 'true' }}
         uses: actions/checkout@v5
@@ -168,7 +181,7 @@ jobs:
           EOF
 
       - name: Checkout public repo for local build
-        if: ${{ matrix.checkout == 'true' }}
+        if: ${{ matrix.checkout == 'true' && matrix.name == 'webstreamr-mbg' }}
         uses: actions/checkout@v5
         with:
           repository: newman2x/WebStreamrMBG
