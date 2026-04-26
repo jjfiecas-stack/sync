@@ -52,7 +52,6 @@ jobs:
           fetch_sha "sootio-stremio-addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"     "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
           fetch_sha "hdhub"                "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"             "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
           fetch_sha "webstreamr-mbg"       "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"         "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr_mbg &
-          fetch_sha "zilean"               "https://api.github.com/repos/AyushSehrawat/zilean/commits/main"           "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_zilean &
           wait
 
           process_repo() {
@@ -100,7 +99,6 @@ jobs:
           process_repo "sootio-stremio-addon" "false" "true"  "https://github.com/sooti/sootio-stremio-addon.git#main"
           process_repo "hdhub"                "true"  "false" "https://github.com/TheVolecitor/hdhub.git#main"
           process_repo "webstreamr-mbg"       "false" "true"  "https://github.com/newman2x/WebStreamrMBG.git#main"
-          process_repo "zilean"               "false" "false" "https://github.com/AyushSehrawat/zilean.git#main"
 
           if [ "$(echo "$INCLUDES" | jq 'length')" -eq 0 ]; then
             MATRIX='{"include":[]}'
@@ -240,7 +238,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [yastream, sootio-stremio-addon, hdhub, webstreamr-mbg, zilean]
+        name: [yastream, sootio-stremio-addon, hdhub, webstreamr-mbg]
     steps:
       - uses: actions/delete-package-versions@v5
         with:
