@@ -97,8 +97,8 @@ jobs:
           }
 
           process_repo "yastream"             "false" "true"  "https://github.com/hoangtamthai/yastream.git#dev"
-          process_repo "sootio-stremio-addon" "false" "false" "https://github.com/sooti/sootio-stremio-addon.git#main"
-          process_repo "hdhub"               "true"  "false" "https://github.com/TheVolecitor/hdhub.git#main"
+          process_repo "sootio-stremio-addon" "false" "true"  "https://github.com/sooti/sootio-stremio-addon.git#main"
+          process_repo "hdhub"                "true"  "false" "https://github.com/TheVolecitor/hdhub.git#main"
           process_repo "webstreamr-mbg"       "false" "true"  "https://github.com/newman2x/WebStreamrMBG.git#main"
           process_repo "zilean"               "false" "false" "https://github.com/AyushSehrawat/zilean.git#main"
 
@@ -157,8 +157,17 @@ jobs:
         run: |
           sed -i '/COPY --from=builder \/app\/data/a COPY --from=builder /app/drizzle ./drizzle' _source/Dockerfile
 
+      - name: Checkout sootio-stremio-addon
+        if: ${{ matrix.name == 'sootio-stremio-addon' }}
+        uses: actions/checkout@v5
+        with:
+          repository: sooti/sootio-stremio-addon
+          ref: main
+          path: _source
+          submodules: false
+
       - name: Checkout private repo
-        if: ${{ matrix.private == 'true' }}
+        if: ${{ matrix.private == 'true' && matrix.name == 'hdhub' }}
         uses: actions/checkout@v5
         with:
           repository: TheVolecitor/hdhub
@@ -167,7 +176,7 @@ jobs:
           path: _source
 
       - name: Write Dockerfile for hdhub
-        if: ${{ matrix.private == 'true' }}
+        if: ${{ matrix.name == 'hdhub' }}
         run: |
           cat > _source/Dockerfile << 'EOF'
           FROM node:20-alpine
@@ -180,8 +189,8 @@ jobs:
           CMD ["node", "server.js"]
           EOF
 
-      - name: Checkout public repo for local build
-        if: ${{ matrix.checkout == 'true' && matrix.name == 'webstreamr-mbg' }}
+      - name: Checkout webstreamr-mbg
+        if: ${{ matrix.name == 'webstreamr-mbg' }}
         uses: actions/checkout@v5
         with:
           repository: newman2x/WebStreamrMBG
