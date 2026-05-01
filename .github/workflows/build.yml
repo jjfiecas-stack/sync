@@ -4,9 +4,11 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild all images (ignore SHA cache)'
+        type: boolean
+        default: false
 
 concurrency:
   group: build-images
@@ -19,6 +21,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.check.outputs.matrix }}
     steps:
@@ -29,15 +32,15 @@ jobs:
 
       - name: Check for upstream changes
         id: check
+        env:
+          FORCE_REBUILD: ${{ inputs.force_rebuild || 'false' }}
         run: |
           SHA_FILE=".last_shas"
-          touch $SHA_FILE
+          touch "$SHA_FILE"
           INCLUDES="[]"
 
           fetch_sha() {
-            local NAME="$1"
-            local URL="$2"
-            local TOKEN="$3"
+            local NAME="$1" URL="$2" TOKEN="$3"
             local SHA
             SHA=$(curl -sf \
               -H "User-Agent: github-actions" \
@@ -46,8 +49,6 @@ jobs:
             echo "$NAME $SHA"
           }
 
-          # Fetch all SHAs in parallel
-          declare -A PIDS RESULTS
           fetch_sha "yastream"             "https://api.github.com/repos/hoangtamthai/yastream/commits/dev"           "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_yastream &
           fetch_sha "sootio-stremio-addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"     "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
           fetch_sha "hdhub"                "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"             "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
@@ -55,74 +56,71 @@ jobs:
           wait
 
           process_repo() {
-            local NAME="$1"
-            local PRIVATE="$2"
-            local CHECKOUT="$3"
-            local CONTEXT="$4"
+            local NAME="$1" PRIVATE="$2"
             local SAFE_NAME="${NAME//[^a-z0-9]/_}"
 
-            local RESULT
-            RESULT=$(cat /tmp/sha_${SAFE_NAME} 2>/dev/null || true)
-            local LATEST_SHA="${RESULT#* }"
+            local RESULT LATEST_SHA
+            RESULT=$(cat "/tmp/sha_${SAFE_NAME}" 2>/dev/null || true)
+            LATEST_SHA="${RESULT#* }"
 
             if [ -z "$LATEST_SHA" ]; then
-              echo "Failed to fetch SHA for $NAME, skipping"
+              echo "::warning::Failed to fetch SHA for $NAME, skipping"
               return
             fi
 
             local STORED_SHA
-            STORED_SHA=$(grep "^$NAME=" $SHA_FILE | cut -d= -f2)
+            STORED_SHA=$(grep "^$NAME=" "$SHA_FILE" | cut -d= -f2 || true)
             echo "$NAME: stored=$STORED_SHA latest=$LATEST_SHA"
 
-            if [ "$LATEST_SHA" = "$STORED_SHA" ]; then
-              echo "$NAME has no new commits, skipping"
+            if [ "$LATEST_SHA" = "$STORED_SHA" ] && [ "$FORCE_REBUILD" != "true" ]; then
+              echo "$NAME unchanged, skipping"
               return
             fi
 
-            echo "$NAME has new commits, adding to build matrix"
+            echo "$NAME → queuing build"
             INCLUDES=$(echo "$INCLUDES" | jq -c \
-              --arg name "$NAME" \
-              --arg context "$CONTEXT" \
-              --arg sha "$LATEST_SHA" \
+              --arg name    "$NAME" \
+              --arg sha     "$LATEST_SHA" \
               --arg private "$PRIVATE" \
-              --arg checkout "$CHECKOUT" \
-              '. + [{"name":$name,"context":$context,"platforms":"linux/arm64","sha":$sha,"private":$private,"checkout":$checkout}]')
+              '. + [{"name":$name,"sha":$sha,"private":$private}]')
 
-            if grep -q "^$NAME=" $SHA_FILE; then
-              sed -i "s/^$NAME=.*/$NAME=$LATEST_SHA/" $SHA_FILE
+            if grep -q "^$NAME=" "$SHA_FILE"; then
+              sed -i "s/^$NAME=.*/$NAME=$LATEST_SHA/" "$SHA_FILE"
             else
-              echo "$NAME=$LATEST_SHA" >> $SHA_FILE
+              echo "$NAME=$LATEST_SHA" >> "$SHA_FILE"
             fi
           }
 
-          process_repo "yastream"             "false" "true"  "https://github.com/hoangtamthai/yastream.git#dev"
-          process_repo "sootio-stremio-addon" "false" "true"  "https://github.com/sooti/sootio-stremio-addon.git#main"
-          process_repo "hdhub"                "true"  "false" "https://github.com/TheVolecitor/hdhub.git#main"
-          process_repo "webstreamr-mbg"       "false" "true"  "https://github.com/newman2x/WebStreamrMBG.git#main"
+          process_repo "yastream"             "false"
+          process_repo "sootio-stremio-addon" "false"
+          process_repo "hdhub"                "true"
+          process_repo "webstreamr-mbg"       "false"
 
           if [ "$(echo "$INCLUDES" | jq 'length')" -eq 0 ]; then
             MATRIX='{"include":[]}'
           else
             MATRIX=$(jq -cn --argjson includes "$INCLUDES" '{"include":$includes}')
           fi
-          echo "matrix<<EOF" >> $GITHUB_OUTPUT
-          echo "$MATRIX" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "matrix<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$MATRIX"     >> "$GITHUB_OUTPUT"
+          echo "EOF"         >> "$GITHUB_OUTPUT"
 
       - name: Commit SHA file
         run: |
-          git config user.name "github-actions"
+          git config user.name  "github-actions"
           git config user.email "github-actions@github.com"
           git add .last_shas
           if git diff --staged --quiet; then
             echo "No SHA changes to commit"
           else
-            git commit -m "Update last SHAs [skip ci]"
+            git commit -m "chore: update last SHAs [skip ci]"
             git push origin ${{ github.ref_name }}
           fi
 
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: check
     if: ${{ needs.check.outputs.matrix != '' && fromJson(needs.check.outputs.matrix).include[0] != null }}
     permissions:
@@ -142,21 +140,24 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
+      # ── yastream ────────────────────────────────────────────────────────────
       - name: Checkout yastream
-        if: ${{ matrix.name == 'yastream' }}
+        if: matrix.name == 'yastream'
         uses: actions/checkout@v5
         with:
           repository: hoangtamthai/yastream
           ref: dev
           path: _source
 
-      - name: Patch Dockerfile for yastream
-        if: ${{ matrix.name == 'yastream' }}
+      - name: Patch yastream Dockerfile
+        if: matrix.name == 'yastream'
         run: |
-          sed -i '/COPY --from=builder \/app\/data/a COPY --from=builder /app/drizzle ./drizzle' _source/Dockerfile
+          sed -i '/COPY --from=builder \/app\/data/a COPY --from=builder /app/drizzle ./drizzle' \
+            _source/Dockerfile
 
+      # ── sootio-stremio-addon ─────────────────────────────────────────────────
       - name: Checkout sootio-stremio-addon
-        if: ${{ matrix.name == 'sootio-stremio-addon' }}
+        if: matrix.name == 'sootio-stremio-addon'
         uses: actions/checkout@v5
         with:
           repository: sooti/sootio-stremio-addon
@@ -164,8 +165,9 @@ jobs:
           path: _source
           submodules: false
 
-      - name: Checkout private repo
-        if: ${{ matrix.private == 'true' && matrix.name == 'hdhub' }}
+      # ── hdhub ────────────────────────────────────────────────────────────────
+      - name: Checkout hdhub
+        if: matrix.name == 'hdhub'
         uses: actions/checkout@v5
         with:
           repository: TheVolecitor/hdhub
@@ -173,8 +175,8 @@ jobs:
           token: ${{ secrets.PAT }}
           path: _source
 
-      - name: Write Dockerfile for hdhub
-        if: ${{ matrix.name == 'hdhub' }}
+      - name: Write hdhub Dockerfile
+        if: matrix.name == 'hdhub'
         run: |
           cat > _source/Dockerfile << 'EOF'
           FROM node:20-alpine
@@ -187,16 +189,17 @@ jobs:
           CMD ["node", "server.js"]
           EOF
 
+      # ── webstreamr-mbg ───────────────────────────────────────────────────────
       - name: Checkout webstreamr-mbg
-        if: ${{ matrix.name == 'webstreamr-mbg' }}
+        if: matrix.name == 'webstreamr-mbg'
         uses: actions/checkout@v5
         with:
           repository: newman2x/WebStreamrMBG
           ref: main
           path: _source
 
-      - name: Write Dockerfile for webstreamr-mbg
-        if: ${{ matrix.name == 'webstreamr-mbg' }}
+      - name: Write webstreamr-mbg Dockerfile
+        if: matrix.name == 'webstreamr-mbg'
         run: |
           cat > _source/Dockerfile << 'EOF'
           FROM node:24-alpine AS builder
@@ -218,21 +221,25 @@ jobs:
           CMD ["node", "dist/index.js"]
           EOF
 
+      # ── build & push ─────────────────────────────────────────────────────────
       - uses: docker/build-push-action@v7
         with:
-          context: ${{ (matrix.private == 'true' || matrix.checkout == 'true') && '_source' || matrix.context }}
-          platforms: ${{ matrix.platforms }}
+          context: _source
+          platforms: linux/arm64
           push: true
           provenance: false
+          no-cache: ${{ inputs.force_rebuild || false }}
           tags: |
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:${{ matrix.sha }}
-          cache-from: type=registry,ref=ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
+          cache-from: type=registry,ref=ghcr.io/jjfiecas-stack/${{ matrix.name }}:cache
+          cache-to:   type=registry,ref=ghcr.io/jjfiecas-stack/${{ matrix.name }}:cache,mode=max
 
   cleanup:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [check, build]
-    if: ${{ needs.build.result == 'success' }}
+    if: needs.build.result == 'success'
     permissions:
       packages: write
     strategy:
