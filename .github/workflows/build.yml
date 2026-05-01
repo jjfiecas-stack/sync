@@ -179,12 +179,17 @@ jobs:
         if: matrix.name == 'hdhub'
         run: |
           cat > _source/Dockerfile << 'EOF'
-          FROM node:20-alpine
+          # Run npm natively on the builder host (x86), avoid QEMU for package installs
+          FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
           WORKDIR /app
           COPY package*.json ./
           RUN npm ci --omit=dev
           COPY . .
           RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js
+
+          FROM node:20-alpine
+          WORKDIR /app
+          COPY --from=builder /app .
           EXPOSE 7000
           CMD ["node", "server.js"]
           EOF
