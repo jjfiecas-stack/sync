@@ -48,10 +48,11 @@ jobs:
 
           # Fetch all SHAs in parallel
           declare -A PIDS RESULTS
-          fetch_sha "yastream"             "https://api.github.com/repos/hoangtamthai/yastream/commits/dev"           "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_yastream &
-          fetch_sha "sootio-stremio-addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"     "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
-          fetch_sha "hdhub"                "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"             "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
-          fetch_sha "webstreamr-mbg"       "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"         "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr_mbg &
+          fetch_sha "yastream"             "https://api.github.com/repos/hoangtamthai/yastream/commits/dev"                  "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_yastream &
+          fetch_sha "sootio-stremio-addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"            "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
+          fetch_sha "hdhub"                "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"                    "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
+          fetch_sha "webstreamr-mbg"       "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"                "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr_mbg &
+          fetch_sha "selfstream"           "https://api.github.com/repos/qwertyuiop8899/SelfStream/commits/main"             "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_selfstream &
           wait
 
           process_repo() {
@@ -99,6 +100,7 @@ jobs:
           process_repo "sootio-stremio-addon" "false" "true"  "https://github.com/sooti/sootio-stremio-addon.git#main"
           process_repo "hdhub"                "true"  "false" "https://github.com/TheVolecitor/hdhub.git#main"
           process_repo "webstreamr-mbg"       "false" "true"  "https://github.com/newman2x/WebStreamrMBG.git#main"
+          process_repo "selfstream"           "false" "true"  "https://github.com/qwertyuiop8899/SelfStream.git#main"
 
           if [ "$(echo "$INCLUDES" | jq 'length')" -eq 0 ]; then
             MATRIX='{"include":[]}'
@@ -218,6 +220,36 @@ jobs:
           CMD ["node", "dist/index.js"]
           EOF
 
+      - name: Checkout selfstream
+        if: ${{ matrix.name == 'selfstream' }}
+        uses: actions/checkout@v5
+        with:
+          repository: qwertyuiop8899/SelfStream
+          ref: main
+          path: _source
+
+      - name: Write Dockerfile for selfstream
+        if: ${{ matrix.name == 'selfstream' }}
+        run: |
+          cat > _source/Dockerfile << 'EOF'
+          FROM node:20-alpine AS builder
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci
+          COPY tsconfig.json ./
+          COPY src ./src
+          RUN npm run build
+
+          FROM node:20-alpine
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci --omit=dev
+          COPY --from=builder /app/dist ./dist
+          ENV PORT=7020
+          EXPOSE 7020
+          CMD ["node", "dist/addon.js"]
+          EOF
+
       - uses: docker/build-push-action@v7
         with:
           context: ${{ (matrix.private == 'true' || matrix.checkout == 'true') && '_source' || matrix.context }}
@@ -238,7 +270,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [yastream, sootio-stremio-addon, hdhub, webstreamr-mbg]
+        name: [yastream, sootio-stremio-addon, hdhub, webstreamr-mbg, selfstream]
     steps:
       - uses: actions/delete-package-versions@v5
         with:
