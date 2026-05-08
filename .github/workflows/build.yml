@@ -2,11 +2,12 @@ name: Build images
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *'   # hourly  — upstream repo checks
+    - cron: '0 0 * * *'   # daily   — action/image version updates
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # remove after June 2, 2026
 
 concurrency:
   group: build-images
@@ -19,10 +20,11 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    if: ${{ github.event.schedule != '0 0 * * *' }}
     outputs:
       matrix: ${{ steps.check.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -47,18 +49,15 @@ jobs:
           }
 
           # Fetch all SHAs in parallel
-          declare -A PIDS RESULTS
-          fetch_sha "yastream"             "https://api.github.com/repos/hoangtamthai/yastream/commits/dev"                  "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_yastream &
-          fetch_sha "sootio-stremio-addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"            "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
-          fetch_sha "hdhub"                "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"                    "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
-          fetch_sha "webstreamr-mbg"       "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"                "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr_mbg &
+          fetch_sha "yastream"             "https://api.github.com/repos/hoangtamthai/yastream/commits/dev"               "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_yastream &
+          fetch_sha "sootio_stremio_addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"         "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
+          fetch_sha "hdhub"                "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"                 "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
+          fetch_sha "webstreamr_mbg"       "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"             "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr_mbg &
           wait
 
           process_repo() {
             local NAME="$1"
             local PRIVATE="$2"
-            local CHECKOUT="$3"
-            local CONTEXT="$4"
             local SAFE_NAME="${NAME//[^a-z0-9]/_}"
 
             local RESULT
@@ -82,11 +81,9 @@ jobs:
             echo "$NAME has new commits, adding to build matrix"
             INCLUDES=$(echo "$INCLUDES" | jq -c \
               --arg name "$NAME" \
-              --arg context "$CONTEXT" \
               --arg sha "$LATEST_SHA" \
               --arg private "$PRIVATE" \
-              --arg checkout "$CHECKOUT" \
-              '. + [{"name":$name,"context":$context,"platforms":"linux/arm64","sha":$sha,"private":$private,"checkout":$checkout}]')
+              '. + [{"name":$name,"platforms":"linux/arm64","sha":$sha,"private":$private}]')
 
             if grep -q "^$NAME=" $SHA_FILE; then
               sed -i "s/^$NAME=.*/$NAME=$LATEST_SHA/" $SHA_FILE
@@ -95,10 +92,10 @@ jobs:
             fi
           }
 
-          process_repo "yastream"             "false" "true"  "https://github.com/hoangtamthai/yastream.git#dev"
-          process_repo "sootio-stremio-addon" "false" "true"  "https://github.com/sooti/sootio-stremio-addon.git#main"
-          process_repo "hdhub"                "true"  "false" "https://github.com/TheVolecitor/hdhub.git#main"
-          process_repo "webstreamr-mbg"       "false" "true"  "https://github.com/newman2x/WebStreamrMBG.git#main"
+          process_repo "yastream"             "false"
+          process_repo "sootio-stremio-addon" "false"
+          process_repo "hdhub"                "true"
+          process_repo "webstreamr-mbg"       "false"
 
           if [ "$(echo "$INCLUDES" | jq 'length')" -eq 0 ]; then
             MATRIX='{"include":[]}'
@@ -144,7 +141,7 @@ jobs:
 
       - name: Checkout yastream
         if: ${{ matrix.name == 'yastream' }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: hoangtamthai/yastream
           ref: dev
@@ -157,16 +154,16 @@ jobs:
 
       - name: Checkout sootio-stremio-addon
         if: ${{ matrix.name == 'sootio-stremio-addon' }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: sooti/sootio-stremio-addon
           ref: main
           path: _source
           submodules: false
 
-      - name: Checkout private repo
-        if: ${{ matrix.private == 'true' && matrix.name == 'hdhub' }}
-        uses: actions/checkout@v5
+      - name: Checkout hdhub
+        if: ${{ matrix.name == 'hdhub' }}
+        uses: actions/checkout@v6
         with:
           repository: TheVolecitor/hdhub
           ref: main
@@ -177,7 +174,7 @@ jobs:
         if: ${{ matrix.name == 'hdhub' }}
         run: |
           cat > _source/Dockerfile << 'EOF'
-          FROM node:20-alpine
+          FROM node:24-alpine
           WORKDIR /app
           COPY package*.json ./
           RUN npm ci --omit=dev
@@ -189,7 +186,7 @@ jobs:
 
       - name: Checkout webstreamr-mbg
         if: ${{ matrix.name == 'webstreamr-mbg' }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: newman2x/WebStreamrMBG
           ref: main
@@ -220,7 +217,7 @@ jobs:
 
       - uses: docker/build-push-action@v7
         with:
-          context: ${{ (matrix.private == 'true' || matrix.checkout == 'true') && '_source' || matrix.context }}
+          context: _source
           platforms: ${{ matrix.platforms }}
           push: true
           provenance: false
@@ -246,3 +243,106 @@ jobs:
           package-type: container
           min-versions-to-keep: 2
           delete-only-untagged-versions: false
+
+  update-versions:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.schedule == '0 0 * * *' || github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check and update versions
+        run: |
+          WORKFLOW=".github/workflows/build.yml"
+          CHANGED=false
+
+          # Returns the latest major tag (e.g. v6) for a given owner/repo
+          get_latest_major() {
+            local REPO="$1"
+            local TAG
+            TAG=$(curl -sf \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/$REPO/releases/latest" \
+              | jq -r '.tag_name // empty')
+            # Strip patch/minor: v6.0.2 -> v6
+            echo "${TAG%%.*}"
+          }
+
+          # Updates all occurrences of uses: action@vX in the workflow
+          update_action() {
+            local ACTION="$1"   # e.g. actions/checkout
+            local REPO="$2"     # GitHub repo slug, same as ACTION in most cases
+            local LATEST
+            LATEST=$(get_latest_major "$REPO")
+            if [ -z "$LATEST" ]; then
+              echo "  [skip] could not fetch latest for $ACTION"
+              return
+            fi
+            local CURRENT
+            CURRENT=$(grep -oP "(?<=$(echo "$ACTION" | sed 's|/|\\/|g')@)v[0-9]+" "$WORKFLOW" \
+              | sort -V | tail -1)
+            if [ -z "$CURRENT" ]; then
+              echo "  [skip] $ACTION not found in workflow"
+              return
+            fi
+            if [ "$CURRENT" = "$LATEST" ]; then
+              echo "  [ok]   $ACTION $CURRENT"
+            else
+              echo "  [bump] $ACTION  $CURRENT -> $LATEST"
+              sed -i "s|${ACTION}@${CURRENT}|${ACTION}@${LATEST}|g" "$WORKFLOW"
+              CHANGED=true
+            fi
+          }
+
+          # Updates node:XX-alpine throughout the workflow (covers inline Dockerfiles)
+          update_node() {
+            local LATEST_MAJOR
+            LATEST_MAJOR=$(curl -sf https://nodejs.org/dist/index.json \
+              | jq -r '[.[] | select(.lts != false and .lts != null)]
+                        | sort_by(.date) | reverse | .[0].version
+                        | ltrimstr("v") | split(".") | .[0]')
+            if [ -z "$LATEST_MAJOR" ]; then
+              echo "  [skip] could not fetch latest Node LTS"
+              return
+            fi
+            local CURRENT_MAJOR
+            CURRENT_MAJOR=$(grep -oP 'node:\K[0-9]+(?=-alpine)' "$WORKFLOW" \
+              | sort -rn | head -1)
+            if [ -z "$CURRENT_MAJOR" ]; then
+              echo "  [skip] no node:-alpine references found"
+              return
+            fi
+            if [ "$CURRENT_MAJOR" = "$LATEST_MAJOR" ]; then
+              echo "  [ok]   node:${CURRENT_MAJOR}-alpine"
+            else
+              echo "  [bump] node:${CURRENT_MAJOR}-alpine -> node:${LATEST_MAJOR}-alpine"
+              sed -i "s|node:${CURRENT_MAJOR}-alpine|node:${LATEST_MAJOR}-alpine|g" "$WORKFLOW"
+              CHANGED=true
+            fi
+          }
+
+          echo "=== GitHub Actions ==="
+          update_action "actions/checkout"                "actions/checkout"
+          update_action "actions/delete-package-versions" "actions/delete-package-versions"
+          update_action "docker/login-action"             "docker/login-action"
+          update_action "docker/setup-qemu-action"        "docker/setup-qemu-action"
+          update_action "docker/setup-buildx-action"      "docker/setup-buildx-action"
+          update_action "docker/build-push-action"        "docker/build-push-action"
+
+          echo "=== Node.js base image ==="
+          update_node
+
+          echo "CHANGED=$CHANGED" >> $GITHUB_ENV
+
+      - name: Commit version updates
+        if: ${{ env.CHANGED == 'true' }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .github/workflows/build.yml
+          git commit -m "chore: update action and image versions [skip ci]"
+          git push origin ${{ github.ref_name }}
