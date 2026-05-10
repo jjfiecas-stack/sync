@@ -33,61 +33,55 @@ jobs:
         id: check
         run: |
           SHA_FILE=".last_shas"
-          touch $SHA_FILE
+          touch "$SHA_FILE"
           INCLUDES="[]"
 
           fetch_sha() {
-            local NAME="$1"
-            local URL="$2"
-            local TOKEN="$3"
-            local SHA
-            SHA=$(curl -sf \
+            local NAME="$1" URL="$2" TOKEN="$3"
+            curl -sf --retry 3 --retry-delay 2 \
               -H "User-Agent: github-actions" \
               -H "Authorization: Bearer $TOKEN" \
-              "$URL" | jq -r '.sha // empty')
-            echo "$NAME $SHA"
+              "$URL" | jq -r '.sha // empty' > "/tmp/sha_${NAME//[^a-z0-9]/_}"
           }
 
-          # Fetch all SHAs in parallel
-          fetch_sha "sootio_stremio_addon" "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main"         "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_sootio_stremio_addon &
-          fetch_sha "hdhub"                "https://api.github.com/repos/TheVolecitor/hdhub/commits/main"                 "${{ secrets.PAT }}"          > /tmp/sha_hdhub &
-          fetch_sha "webstreamr_mbg"       "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main"             "${{ secrets.GITHUB_TOKEN }}" > /tmp/sha_webstreamr_mbg &
+          fetch_sha "sootio-stremio-addon" \
+            "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main" \
+            "${{ secrets.GITHUB_TOKEN }}" &
+          fetch_sha "hdhub" \
+            "https://api.github.com/repos/TheVolecitor/hdhub/commits/main" \
+            "${{ secrets.PAT }}" &
+          fetch_sha "webstreamr-mbg" \
+            "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main" \
+            "${{ secrets.GITHUB_TOKEN }}" &
           wait
 
           process_repo() {
-            local NAME="$1"
-            local PRIVATE="$2"
-            local SAFE_NAME="${NAME//[^a-z0-9]/_}"
+            local NAME="$1" PRIVATE="$2"
+            local SAFE="${NAME//[^a-z0-9]/_}"
+            local LATEST STORED
 
-            local RESULT
-            RESULT=$(cat /tmp/sha_${SAFE_NAME} 2>/dev/null || true)
-            local LATEST_SHA="${RESULT#* }"
-
-            if [ -z "$LATEST_SHA" ]; then
-              echo "Failed to fetch SHA for $NAME, skipping"
+            LATEST=$(cat "/tmp/sha_${SAFE}" 2>/dev/null)
+            if [ -z "$LATEST" ]; then
+              echo "::warning::Failed to fetch SHA for $NAME, skipping"
               return
             fi
 
-            local STORED_SHA
-            STORED_SHA=$(grep "^$NAME=" $SHA_FILE | cut -d= -f2)
-            echo "$NAME: stored=$STORED_SHA latest=$LATEST_SHA"
-
-            if [ "$LATEST_SHA" = "$STORED_SHA" ]; then
-              echo "$NAME has no new commits, skipping"
+            STORED=$(grep "^${NAME}=" "$SHA_FILE" | cut -d= -f2)
+            if [ "$LATEST" = "$STORED" ]; then
+              echo "$NAME: up to date ($LATEST)"
               return
             fi
 
-            echo "$NAME has new commits, adding to build matrix"
-            INCLUDES=$(echo "$INCLUDES" | jq -c \
-              --arg name "$NAME" \
-              --arg sha "$LATEST_SHA" \
-              --arg private "$PRIVATE" \
-              '. + [{"name":$name,"platforms":"linux/arm64","sha":$sha,"private":$private}]')
+            echo "$NAME: new commit $LATEST (was: ${STORED:-none})"
+            INCLUDES=$(jq -cn \
+              --argjson cur "$INCLUDES" \
+              --arg name "$NAME" --arg sha "$LATEST" --arg private "$PRIVATE" \
+              '$cur + [{"name":$name,"platforms":"linux/arm64","sha":$sha,"private":$private}]')
 
-            if grep -q "^$NAME=" $SHA_FILE; then
-              sed -i "s/^$NAME=.*/$NAME=$LATEST_SHA/" $SHA_FILE
+            if grep -q "^${NAME}=" "$SHA_FILE"; then
+              sed -i "s/^${NAME}=.*/${NAME}=${LATEST}/" "$SHA_FILE"
             else
-              echo "$NAME=$LATEST_SHA" >> $SHA_FILE
+              printf '%s=%s\n' "$NAME" "$LATEST" >> "$SHA_FILE"
             fi
           }
 
@@ -95,25 +89,26 @@ jobs:
           process_repo "hdhub"                "true"
           process_repo "webstreamr-mbg"       "false"
 
-          if [ "$(echo "$INCLUDES" | jq 'length')" -eq 0 ]; then
-            MATRIX='{"include":[]}'
+          if [ "$(jq 'length' <<< "$INCLUDES")" -eq 0 ]; then
+            echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
           else
-            MATRIX=$(jq -cn --argjson includes "$INCLUDES" '{"include":$includes}')
+            {
+              echo "matrix<<EOF"
+              jq -cn --argjson i "$INCLUDES" '{"include":$i}'
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
           fi
-          echo "matrix<<EOF" >> $GITHUB_OUTPUT
-          echo "$MATRIX" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Commit SHA file
         run: |
-          git config user.name "github-actions"
+          git config user.name  "github-actions"
           git config user.email "github-actions@github.com"
           git add .last_shas
           if git diff --staged --quiet; then
             echo "No SHA changes to commit"
           else
-            git commit -m "Update last SHAs [skip ci]"
-            git push origin ${{ github.ref_name }}
+            git commit -m "chore: update last SHAs [skip ci]"
+            git push origin "${{ github.ref_name }}"
           fi
 
   build:
@@ -144,7 +139,6 @@ jobs:
           repository: sooti/sootio-stremio-addon
           ref: main
           path: _source
-          submodules: false
 
       - name: Checkout hdhub
         if: ${{ matrix.name == 'hdhub' }}
@@ -158,7 +152,7 @@ jobs:
       - name: Write Dockerfile for hdhub
         if: ${{ matrix.name == 'hdhub' }}
         run: |
-          cat > _source/Dockerfile << 'EOF'
+          cat > _source/Dockerfile << 'DOCKERFILE'
           FROM node:24-alpine
           WORKDIR /app
           COPY package*.json ./
@@ -167,7 +161,7 @@ jobs:
           RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js
           EXPOSE 7000
           CMD ["node", "server.js"]
-          EOF
+          DOCKERFILE
 
       - name: Checkout webstreamr-mbg
         if: ${{ matrix.name == 'webstreamr-mbg' }}
@@ -180,7 +174,7 @@ jobs:
       - name: Write Dockerfile for webstreamr-mbg
         if: ${{ matrix.name == 'webstreamr-mbg' }}
         run: |
-          cat > _source/Dockerfile << 'EOF'
+          cat > _source/Dockerfile << 'DOCKERFILE'
           FROM node:24-alpine AS builder
           WORKDIR /app
           COPY package*.json ./
@@ -194,11 +188,10 @@ jobs:
           COPY package*.json ./
           RUN npm ci --omit=dev
           COPY --from=builder /app/dist ./dist
-          ENV NODE_ENV=production
-          ENV PORT=51546
+          ENV NODE_ENV=production PORT=51546
           EXPOSE 51546
           CMD ["node", "dist/index.js"]
-          EOF
+          DOCKERFILE
 
       - uses: docker/build-push-action@v7
         with:
@@ -209,7 +202,8 @@ jobs:
           tags: |
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:${{ matrix.sha }}
-          cache-from: type=registry,ref=ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to:   type=gha,scope=${{ matrix.name }},mode=max
 
   cleanup:
     runs-on: ubuntu-latest
@@ -245,29 +239,37 @@ jobs:
           WORKFLOW=".github/workflows/build.yml"
           CHANGED=false
 
-          # Returns the latest major tag (e.g. v6) for a given owner/repo
-          get_latest_major() {
-            local REPO="$1"
-            local TAG
-            TAG=$(curl -sf \
+          # Fetch all latest versions in parallel
+          gh_latest_major() {
+            curl -sf --retry 3 \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/$REPO/releases/latest" \
-              | jq -r '.tag_name // empty')
-            # Strip patch/minor: v6.0.2 -> v6
-            echo "${TAG%%.*}"
+              "https://api.github.com/repos/$1/releases/latest" \
+              | jq -r '.tag_name // empty' \
+              | grep -oP '^v[0-9]+' \
+              > "/tmp/ver_$(echo "$1" | tr '/' '_')"
           }
 
-          # Updates all occurrences of uses: action@vX in the workflow
+          gh_latest_major "actions/checkout"                &
+          gh_latest_major "actions/delete-package-versions" &
+          gh_latest_major "docker/login-action"             &
+          gh_latest_major "docker/setup-qemu-action"        &
+          gh_latest_major "docker/setup-buildx-action"      &
+          gh_latest_major "docker/build-push-action"        &
+          curl -sf --retry 3 https://nodejs.org/dist/index.json \
+            | jq -r '[.[] | select(.lts != false and .lts != null)]
+                      | sort_by(.date) | reverse | .[0].version
+                      | ltrimstr("v") | split(".") | .[0]' \
+            > /tmp/ver_node &
+          wait
+
           update_action() {
-            local ACTION="$1"   # e.g. actions/checkout
-            local REPO="$2"     # GitHub repo slug, same as ACTION in most cases
-            local LATEST
-            LATEST=$(get_latest_major "$REPO")
+            local ACTION="$1" REPO="$2"
+            local LATEST CURRENT
+            LATEST=$(cat "/tmp/ver_$(echo "$REPO" | tr '/' '_')" 2>/dev/null)
             if [ -z "$LATEST" ]; then
               echo "  [skip] could not fetch latest for $ACTION"
               return
             fi
-            local CURRENT
             CURRENT=$(grep -oP "(?<=$(echo "$ACTION" | sed 's|/|\\/|g')@)v[0-9]+" "$WORKFLOW" \
               | sort -V | tail -1)
             if [ -z "$CURRENT" ]; then
@@ -275,7 +277,7 @@ jobs:
               return
             fi
             if [ "$CURRENT" = "$LATEST" ]; then
-              echo "  [ok]   $ACTION $CURRENT"
+              echo "  [ok]   $ACTION @ $CURRENT"
             else
               echo "  [bump] $ACTION  $CURRENT -> $LATEST"
               sed -i "s|${ACTION}@${CURRENT}|${ACTION}@${LATEST}|g" "$WORKFLOW"
@@ -283,29 +285,23 @@ jobs:
             fi
           }
 
-          # Updates node:XX-alpine throughout the workflow (covers inline Dockerfiles)
           update_node() {
-            local LATEST_MAJOR
-            LATEST_MAJOR=$(curl -sf https://nodejs.org/dist/index.json \
-              | jq -r '[.[] | select(.lts != false and .lts != null)]
-                        | sort_by(.date) | reverse | .[0].version
-                        | ltrimstr("v") | split(".") | .[0]')
-            if [ -z "$LATEST_MAJOR" ]; then
-              echo "  [skip] could not fetch latest Node LTS"
+            local LATEST CURRENT
+            LATEST=$(cat /tmp/ver_node 2>/dev/null)
+            if [ -z "$LATEST" ]; then
+              echo "  [skip] could not fetch Node LTS version"
               return
             fi
-            local CURRENT_MAJOR
-            CURRENT_MAJOR=$(grep -oP 'node:\K[0-9]+(?=-alpine)' "$WORKFLOW" \
-              | sort -rn | head -1)
-            if [ -z "$CURRENT_MAJOR" ]; then
+            CURRENT=$(grep -oP 'node:\K[0-9]+(?=-alpine)' "$WORKFLOW" | sort -rn | head -1)
+            if [ -z "$CURRENT" ]; then
               echo "  [skip] no node:-alpine references found"
               return
             fi
-            if [ "$CURRENT_MAJOR" = "$LATEST_MAJOR" ]; then
-              echo "  [ok]   node:${CURRENT_MAJOR}-alpine"
+            if [ "$CURRENT" = "$LATEST" ]; then
+              echo "  [ok]   node:${CURRENT}-alpine"
             else
-              echo "  [bump] node:${CURRENT_MAJOR}-alpine -> node:${LATEST_MAJOR}-alpine"
-              sed -i "s|node:${CURRENT_MAJOR}-alpine|node:${LATEST_MAJOR}-alpine|g" "$WORKFLOW"
+              echo "  [bump] node:${CURRENT}-alpine -> node:${LATEST}-alpine"
+              sed -i "s|node:${CURRENT}-alpine|node:${LATEST}-alpine|g" "$WORKFLOW"
               CHANGED=true
             fi
           }
@@ -321,13 +317,13 @@ jobs:
           echo "=== Node.js base image ==="
           update_node
 
-          echo "CHANGED=$CHANGED" >> $GITHUB_ENV
+          echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
 
       - name: Commit version updates
         if: ${{ env.CHANGED == 'true' }}
         run: |
-          git config user.name "github-actions"
+          git config user.name  "github-actions"
           git config user.email "github-actions@github.com"
           git add .github/workflows/build.yml
           git commit -m "chore: update action and image versions [skip ci]"
-          git push origin ${{ github.ref_name }}
+          git push origin "${{ github.ref_name }}"
