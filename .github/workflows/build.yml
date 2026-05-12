@@ -218,7 +218,7 @@ jobs:
           WORKDIR /app
           COPY --from=deps /app/node_modules ./node_modules
           COPY . .
-          RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js || true
+          ENV PORT=7000 HOST=0.0.0.0
           EXPOSE 7000
           CMD ["node", "server.js"]
           DOCKERFILE
