@@ -53,9 +53,6 @@ jobs:
           fetch_sha "webstreamr-mbg" \
             "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main" \
             "${{ secrets.GITHUB_TOKEN }}" &
-          fetch_sha "onlyporn-v2" \
-            "https://api.github.com/repos/AEGIS-ASMO/onlyporn-V2-public/commits/main" \
-            "${{ secrets.GITHUB_TOKEN }}" &
           wait
 
           process_repo() {
@@ -91,7 +88,6 @@ jobs:
           process_repo "sootio-stremio-addon" "false"
           process_repo "hdhub"                "true"
           process_repo "webstreamr-mbg"       "false"
-          process_repo "onlyporn-v2"          "false"
 
           if [ "$(jq 'length' <<< "$INCLUDES")" -eq 0 ]; then
             echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
@@ -197,32 +193,6 @@ jobs:
           CMD ["node", "dist/index.js"]
           DOCKERFILE
 
-      - name: Checkout onlyporn-v2
-        if: ${{ matrix.name == 'onlyporn-v2' }}
-        uses: actions/checkout@v6
-        with:
-          repository: AEGIS-ASMO/onlyporn-V2-public
-          ref: main
-          path: _source
-
-      - name: Write Dockerfile for onlyporn-v2
-        if: ${{ matrix.name == 'onlyporn-v2' }}
-        run: |
-          cat > _source/Dockerfile << 'DOCKERFILE'
-          FROM --platform=$BUILDPLATFORM node:20-alpine AS deps
-          WORKDIR /app
-          COPY package.json yarn.lock ./
-          RUN yarn install --frozen-lockfile --production --ignore-engines
-
-          FROM node:20-alpine
-          WORKDIR /app
-          COPY --from=deps /app/node_modules ./node_modules
-          COPY . .
-          ENV PORT=7000 HOST=0.0.0.0
-          EXPOSE 7000
-          CMD ["node", "server.js"]
-          DOCKERFILE
-
       - uses: docker/build-push-action@v7
         with:
           context: _source
@@ -244,7 +214,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [sootio-stremio-addon, hdhub, webstreamr-mbg, onlyporn-v2]
+        name: [sootio-stremio-addon, hdhub, webstreamr-mbg]
     steps:
       - uses: actions/delete-package-versions@v5
         with:
