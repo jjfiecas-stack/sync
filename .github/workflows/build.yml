@@ -209,12 +209,12 @@ jobs:
         if: ${{ matrix.name == 'onlyporn-v2' }}
         run: |
           cat > _source/Dockerfile << 'DOCKERFILE'
-          FROM --platform=$BUILDPLATFORM node:24-alpine AS deps
+          FROM --platform=$BUILDPLATFORM node:20-alpine AS deps
           WORKDIR /app
           COPY package.json yarn.lock ./
-          RUN yarn install --frozen-lockfile --production
+          RUN yarn install --frozen-lockfile --production --ignore-engines
 
-          FROM node:24-alpine
+          FROM node:20-alpine
           WORKDIR /app
           COPY --from=deps /app/node_modules ./node_modules
           COPY . .
