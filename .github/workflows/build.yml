@@ -4,6 +4,8 @@ on:
     - cron: '0 * * * *'   # hourly  — upstream repo checks
     - cron: '0 0 * * *'   # daily   — action/image version updates
   workflow_dispatch:
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # remove after June 2, 2026
 concurrency:
   group: build-images
   cancel-in-progress: false
@@ -202,7 +204,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT }}
       - name: Check and update versions
         run: |
           WORKFLOW=".github/workflows/build.yml"
