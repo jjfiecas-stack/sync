@@ -4,8 +4,6 @@ on:
     - cron: '0 * * * *'   # hourly  — upstream repo checks
     - cron: '0 0 * * *'   # daily   — action/image version updates
   workflow_dispatch:
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # remove after June 2, 2026
 concurrency:
   group: build-images
   cancel-in-progress: false
@@ -36,9 +34,6 @@ jobs:
               -H "Authorization: Bearer $TOKEN" \
               "$URL" | jq -r '.sha // empty' > "/tmp/sha_${NAME//[^a-z0-9]/_}"
           }
-          fetch_sha "sootio-stremio-addon" \
-            "https://api.github.com/repos/sooti/sootio-stremio-addon/commits/main" \
-            "${{ secrets.GITHUB_TOKEN }}" &
           fetch_sha "hdhub" \
             "https://api.github.com/repos/TheVolecitor/hdhub/commits/main" \
             "${{ secrets.PAT }}" &
@@ -71,7 +66,6 @@ jobs:
               printf '%s=%s\n' "$NAME" "$LATEST" >> "$SHA_FILE"
             fi
           }
-          process_repo "sootio-stremio-addon" "false"
           process_repo "hdhub"                "true"
           process_repo "webstreamr-mbg"       "false"
           if [ "$(jq 'length' <<< "$INCLUDES")" -eq 0 ]; then
@@ -117,13 +111,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
-      - name: Checkout sootio-stremio-addon
-        if: ${{ matrix.name == 'sootio-stremio-addon' }}
-        uses: actions/checkout@v7
-        with:
-          repository: sooti/sootio-stremio-addon
-          ref: main
-          path: _source
       - name: Checkout hdhub
         if: ${{ matrix.name == 'hdhub' }}
         uses: actions/checkout@v7
@@ -192,7 +179,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [sootio-stremio-addon, hdhub, webstreamr-mbg]
+        name: [hdhub, webstreamr-mbg]
     steps:
       - uses: actions/delete-package-versions@v5
         with:
