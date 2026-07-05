@@ -4,6 +4,8 @@ on:
     - cron: '0 * * * *'   # hourly  — upstream repo checks
     - cron: '0 0 * * *'   # daily   — action/image version updates
   workflow_dispatch:
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # remove after June 2, 2026
 concurrency:
   group: build-images
   cancel-in-progress: false
