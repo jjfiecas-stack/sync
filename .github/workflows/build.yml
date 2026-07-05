@@ -19,7 +19,7 @@ jobs:
     outputs:
       matrix: ${{ steps.check.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -92,7 +92,12 @@ jobs:
             echo "No SHA changes to commit"
           else
             git commit -m "chore: update last SHAs [skip ci]"
-            git push origin "${{ github.ref_name }}"
+            for i in 1 2 3 4 5; do
+              git pull --rebase origin "${{ github.ref_name }}" && \
+              git push origin "${{ github.ref_name }}" && break
+              echo "Push attempt $i failed, retrying..."
+              sleep $((RANDOM % 5 + 1))
+            done
           fi
   build:
     runs-on: ubuntu-latest
@@ -114,14 +119,14 @@ jobs:
       - uses: docker/setup-buildx-action@v4
       - name: Checkout sootio-stremio-addon
         if: ${{ matrix.name == 'sootio-stremio-addon' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           repository: sooti/sootio-stremio-addon
           ref: main
           path: _source
       - name: Checkout hdhub
         if: ${{ matrix.name == 'hdhub' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           repository: TheVolecitor/hdhub
           ref: main
@@ -142,7 +147,7 @@ jobs:
           DOCKERFILE
       - name: Checkout webstreamr-mbg
         if: ${{ matrix.name == 'webstreamr-mbg' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           repository: newman2x/WebStreamrMBG
           ref: main
@@ -197,11 +202,12 @@ jobs:
           delete-only-untagged-versions: false
   update-versions:
     runs-on: ubuntu-latest
-    if: ${{ github.event.schedule == '0 0 * * *' || github.event_name == 'workflow_dispatch' }}
+    needs: check
+    if: ${{ always() && (github.event.schedule == '0 0 * * *' || github.event_name == 'workflow_dispatch') }}
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT }}
@@ -289,4 +295,9 @@ jobs:
           git config user.email "github-actions@github.com"
           git add .github/workflows/build.yml
           git commit -m "chore: update action and image versions [skip ci]"
-          git push origin "${{ github.ref_name }}"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin "${{ github.ref_name }}" && \
+            git push origin "${{ github.ref_name }}" && break
+            echo "Push attempt $i failed, retrying..."
+            sleep $((RANDOM % 5 + 1))
+          done
