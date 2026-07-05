@@ -12,7 +12,6 @@ concurrency:
 permissions:
   packages: write
   contents: write
-  workflows: write
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -201,7 +200,6 @@ jobs:
     if: ${{ github.event.schedule == '0 0 * * *' || github.event_name == 'workflow_dispatch' }}
     permissions:
       contents: write
-      workflows: write
     steps:
       - uses: actions/checkout@v6
         with:
