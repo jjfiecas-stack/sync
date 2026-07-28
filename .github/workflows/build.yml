@@ -1,15 +1,19 @@
-name: Build images 
+name: Build images
+
 on:
   schedule:
     - cron: '0 * * * *'   # hourly  — upstream repo checks
     - cron: '0 0 * * *'   # daily   — action/image version updates
   workflow_dispatch:
+
 concurrency:
   group: build-images
   cancel-in-progress: false
+
 permissions:
   packages: write
   contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -21,19 +25,30 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Check for upstream changes
         id: check
         run: |
           SHA_FILE=".last_shas"
           touch "$SHA_FILE"
           INCLUDES="[]"
+
           fetch_sha() {
             local NAME="$1" URL="$2" TOKEN="$3"
-            curl -sf --retry 3 --retry-delay 2 \
+            local HTTP_CODE
+            HTTP_CODE=$(curl -s --retry 3 --retry-delay 2 \
               -H "User-Agent: github-actions" \
               -H "Authorization: Bearer $TOKEN" \
-              "$URL" | jq -r '.sha // empty' > "/tmp/sha_${NAME//[^a-z0-9]/_}"
+              -o "/tmp/resp_${NAME//[^a-z0-9]/_}" \
+              -w "%{http_code}" \
+              "$URL")
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "::warning::Fetch for $NAME failed with HTTP $HTTP_CODE (check token/permissions)"
+              return
+            fi
+            jq -r '.sha // empty' "/tmp/resp_${NAME//[^a-z0-9]/_}" > "/tmp/sha_${NAME//[^a-z0-9]/_}"
           }
+
           fetch_sha "hdhub" \
             "https://api.github.com/repos/TheVolecitor/hdhub/commits/main" \
             "${{ secrets.PAT }}" &
@@ -41,13 +56,14 @@ jobs:
             "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main" \
             "${{ secrets.GITHUB_TOKEN }}" &
           wait
+
           process_repo() {
             local NAME="$1" PRIVATE="$2"
             local SAFE="${NAME//[^a-z0-9]/_}"
             local LATEST STORED
             LATEST=$(cat "/tmp/sha_${SAFE}" 2>/dev/null)
             if [ -z "$LATEST" ]; then
-              echo "::warning::Failed to fetch SHA for $NAME, skipping"
+              echo "::warning::No SHA retrieved for $NAME, skipping this run"
               return
             fi
             STORED=$(grep "^${NAME}=" "$SHA_FILE" | cut -d= -f2)
@@ -60,14 +76,11 @@ jobs:
               --argjson cur "$INCLUDES" \
               --arg name "$NAME" --arg sha "$LATEST" --arg private "$PRIVATE" \
               '$cur + [{"name":$name,"platforms":"linux/arm64","sha":$sha,"private":$private}]')
-            if grep -q "^${NAME}=" "$SHA_FILE"; then
-              sed -i "s/^${NAME}=.*/${NAME}=${LATEST}/" "$SHA_FILE"
-            else
-              printf '%s=%s\n' "$NAME" "$LATEST" >> "$SHA_FILE"
-            fi
           }
-          process_repo "hdhub"                "true"
-          process_repo "webstreamr-mbg"       "false"
+
+          process_repo "hdhub"          "true"
+          process_repo "webstreamr-mbg" "false"
+
           if [ "$(jq 'length' <<< "$INCLUDES")" -eq 0 ]; then
             echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
           else
@@ -77,22 +90,7 @@ jobs:
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
           fi
-      - name: Commit SHA file
-        run: |
-          git config user.name  "github-actions"
-          git config user.email "github-actions@github.com"
-          git add .last_shas
-          if git diff --staged --quiet; then
-            echo "No SHA changes to commit"
-          else
-            git commit -m "chore: update last SHAs [skip ci]"
-            for i in 1 2 3 4 5; do
-              git pull --rebase origin "${{ github.ref_name }}" && \
-              git push origin "${{ github.ref_name }}" && break
-              echo "Push attempt $i failed, retrying..."
-              sleep $((RANDOM % 5 + 1))
-            done
-          fi
+
   build:
     runs-on: ubuntu-latest
     needs: check
@@ -103,14 +101,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.check.outputs.matrix) }}
+    outputs:
+      hdhub_sha: ${{ steps.record.outputs.hdhub_sha }}
+      webstreamr_mbg_sha: ${{ steps.record.outputs.webstreamr_mbg_sha }}
     steps:
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
+
       - name: Checkout hdhub
         if: ${{ matrix.name == 'hdhub' }}
         uses: actions/checkout@v7
@@ -119,6 +122,7 @@ jobs:
           ref: main
           token: ${{ secrets.PAT }}
           path: _source
+
       - name: Write Dockerfile for hdhub
         if: ${{ matrix.name == 'hdhub' }}
         run: |
@@ -132,6 +136,7 @@ jobs:
           EXPOSE 7000
           CMD ["node", "server.js"]
           DOCKERFILE
+
       - name: Checkout webstreamr-mbg
         if: ${{ matrix.name == 'webstreamr-mbg' }}
         uses: actions/checkout@v7
@@ -139,6 +144,7 @@ jobs:
           repository: newman2x/WebStreamrMBG
           ref: main
           path: _source
+
       - name: Write Dockerfile for webstreamr-mbg
         if: ${{ matrix.name == 'webstreamr-mbg' }}
         run: |
@@ -159,6 +165,7 @@ jobs:
           EXPOSE 51546
           CMD ["node", "dist/index.js"]
           DOCKERFILE
+
       - uses: docker/build-push-action@v7
         with:
           context: _source
@@ -170,10 +177,69 @@ jobs:
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:${{ matrix.sha }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to:   type=gha,scope=${{ matrix.name }},mode=max
+
+      - name: Record successful build
+        id: record
+        run: |
+          SAFE_NAME=$(echo "${{ matrix.name }}" | tr '-' '_')
+          echo "${SAFE_NAME}_sha=${{ matrix.sha }}" >> "$GITHUB_OUTPUT"
+
+  update-sha-file:
+    runs-on: ubuntu-latest
+    needs: [check, build]
+    if: ${{ always() && needs.build.result != 'skipped' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update SHA file for successfully built images only
+        run: |
+          SHA_FILE=".last_shas"
+          touch "$SHA_FILE"
+          CHANGED=false
+
+          update_sha() {
+            local NAME="$1" SHA="$2"
+            [ -z "$SHA" ] && return
+            if grep -q "^${NAME}=" "$SHA_FILE"; then
+              sed -i "s/^${NAME}=.*/${NAME}=${SHA}/" "$SHA_FILE"
+            else
+              printf '%s=%s\n' "$NAME" "$SHA" >> "$SHA_FILE"
+            fi
+            CHANGED=true
+          }
+
+          update_sha "hdhub" "${{ needs.build.outputs.hdhub_sha }}"
+          update_sha "webstreamr-mbg" "${{ needs.build.outputs.webstreamr_mbg_sha }}"
+
+          echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
+
+      - name: Commit SHA file
+        if: ${{ env.CHANGED == 'true' }}
+        run: |
+          git config user.name  "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .last_shas
+          if git diff --staged --quiet; then
+            echo "No SHA changes to commit"
+          else
+            git commit -m "chore: update last SHAs [skip ci]"
+            for i in 1 2 3 4 5; do
+              git pull --rebase origin "${{ github.ref_name }}" && \
+              git push origin "${{ github.ref_name }}" && break
+              echo "Push attempt $i failed, retrying..."
+              sleep $((RANDOM % 5 + 1))
+            done
+          fi
+
   cleanup:
     runs-on: ubuntu-latest
     needs: [check, build]
-    if: ${{ needs.build.result == 'success' }}
+    if: ${{ always() && needs.build.result == 'success' }}
     permissions:
       packages: write
     strategy:
@@ -187,6 +253,7 @@ jobs:
           package-type: container
           min-versions-to-keep: 2
           delete-only-untagged-versions: false
+
   update-versions:
     runs-on: ubuntu-latest
     needs: check
@@ -198,11 +265,12 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT }}
+
       - name: Check and update versions
         run: |
           WORKFLOW=".github/workflows/build.yml"
           CHANGED=false
-          # Fetch all latest versions in parallel
+
           gh_latest_major() {
             curl -sf --retry 3 \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -223,6 +291,7 @@ jobs:
                       | ltrimstr("v") | split(".") | .[0]' \
             > /tmp/ver_node &
           wait
+
           update_action() {
             local ACTION="$1" REPO="$2"
             local LATEST CURRENT
@@ -265,6 +334,7 @@ jobs:
               CHANGED=true
             fi
           }
+
           echo "=== GitHub Actions ==="
           update_action "actions/checkout"                "actions/checkout"
           update_action "actions/delete-package-versions" "actions/delete-package-versions"
@@ -274,7 +344,9 @@ jobs:
           update_action "docker/build-push-action"        "docker/build-push-action"
           echo "=== Node.js base image ==="
           update_node
+
           echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
+
       - name: Commit version updates
         if: ${{ env.CHANGED == 'true' }}
         run: |
