@@ -52,9 +52,6 @@ jobs:
           fetch_sha "hdhub" \
             "https://api.github.com/repos/TheVolecitor/hdhub/commits/main" \
             "${{ secrets.PAT }}" &
-          fetch_sha "webstreamr-mbg" \
-            "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main" \
-            "${{ secrets.GITHUB_TOKEN }}" &
           wait
 
           process_repo() {
@@ -78,8 +75,7 @@ jobs:
               '$cur + [{"name":$name,"platforms":"linux/arm64","sha":$sha,"private":$private}]')
           }
 
-          process_repo "hdhub"          "true"
-          process_repo "webstreamr-mbg" "false"
+          process_repo "hdhub" "true"
 
           if [ "$(jq 'length' <<< "$INCLUDES")" -eq 0 ]; then
             echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
@@ -103,7 +99,6 @@ jobs:
       matrix: ${{ fromJson(needs.check.outputs.matrix) }}
     outputs:
       hdhub_sha: ${{ steps.record.outputs.hdhub_sha }}
-      webstreamr_mbg_sha: ${{ steps.record.outputs.webstreamr_mbg_sha }}
     steps:
       - uses: docker/login-action@v4
         with:
@@ -135,35 +130,6 @@ jobs:
           RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js
           EXPOSE 7000
           CMD ["node", "server.js"]
-          DOCKERFILE
-
-      - name: Checkout webstreamr-mbg
-        if: ${{ matrix.name == 'webstreamr-mbg' }}
-        uses: actions/checkout@v7
-        with:
-          repository: newman2x/WebStreamrMBG
-          ref: main
-          path: _source
-
-      - name: Write Dockerfile for webstreamr-mbg
-        if: ${{ matrix.name == 'webstreamr-mbg' }}
-        run: |
-          cat > _source/Dockerfile << 'DOCKERFILE'
-          FROM node:24-alpine AS builder
-          WORKDIR /app
-          COPY package*.json ./
-          RUN npm ci
-          COPY tsconfig.json ./
-          COPY src ./src
-          RUN npm run build
-          FROM node:24-alpine
-          WORKDIR /app
-          COPY package*.json ./
-          RUN npm ci --omit=dev
-          COPY --from=builder /app/dist ./dist
-          ENV NODE_ENV=production PORT=51546
-          EXPOSE 51546
-          CMD ["node", "dist/index.js"]
           DOCKERFILE
 
       - uses: docker/build-push-action@v7
@@ -214,7 +180,6 @@ jobs:
           }
 
           update_sha "hdhub" "${{ needs.build.outputs.hdhub_sha }}"
-          update_sha "webstreamr-mbg" "${{ needs.build.outputs.webstreamr_mbg_sha }}"
 
           echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
 
@@ -245,7 +210,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [hdhub, webstreamr-mbg]
+        name: [hdhub]
     steps:
       - uses: actions/delete-package-versions@v5
         with:
