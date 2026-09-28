@@ -52,6 +52,9 @@ jobs:
           fetch_sha "hdhub" \
             "https://api.github.com/repos/TheVolecitor/hdhub/commits/main" \
             "${{ secrets.PAT }}" &
+          fetch_sha "webstreamr-mbg" \
+            "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main" \
+            "${{ secrets.PAT }}" &
           wait
 
           process_repo() {
@@ -76,6 +79,7 @@ jobs:
           }
 
           process_repo "hdhub" "true"
+          process_repo "webstreamr-mbg" "false"
 
           if [ "$(jq 'length' <<< "$INCLUDES")" -eq 0 ]; then
             echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
@@ -99,6 +103,7 @@ jobs:
       matrix: ${{ fromJson(needs.check.outputs.matrix) }}
     outputs:
       hdhub_sha: ${{ steps.record.outputs.hdhub_sha }}
+      webstreamr_mbg_sha: ${{ steps.record.outputs.webstreamr_mbg_sha }}
     steps:
       - uses: docker/login-action@v4
         with:
@@ -118,6 +123,15 @@ jobs:
           token: ${{ secrets.PAT }}
           path: _source
 
+      - name: Checkout webstreamr-mbg
+        if: ${{ matrix.name == 'webstreamr-mbg' }}
+        uses: actions/checkout@v7
+        with:
+          repository: newman2x/WebStreamrMBG
+          ref: main
+          token: ${{ secrets.PAT }}
+          path: _source
+
       - name: Write Dockerfile for hdhub
         if: ${{ matrix.name == 'hdhub' }}
         run: |
@@ -130,6 +144,21 @@ jobs:
           RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js
           EXPOSE 7000
           CMD ["node", "server.js"]
+          DOCKERFILE
+
+      - name: Write Dockerfile for webstreamr-mbg
+        if: ${{ matrix.name == 'webstreamr-mbg' }}
+        run: |
+          cat > _source/Dockerfile << 'DOCKERFILE'
+          FROM node:22-alpine
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci
+          COPY . .
+          RUN npm run build && npm prune --omit=dev
+          ENV NODE_ENV=production
+          EXPOSE 51546
+          CMD ["npm", "start"]
           DOCKERFILE
 
       - uses: docker/build-push-action@v7
@@ -180,6 +209,7 @@ jobs:
           }
 
           update_sha "hdhub" "${{ needs.build.outputs.hdhub_sha }}"
+          update_sha "webstreamr-mbg" "${{ needs.build.outputs.webstreamr_mbg_sha }}"
 
           echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
 
@@ -210,7 +240,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [hdhub]
+        name: [hdhub, webstreamr-mbg]
     steps:
       - uses: actions/delete-package-versions@v5
         with:
