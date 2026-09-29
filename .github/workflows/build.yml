@@ -53,6 +53,10 @@ jobs:
             "https://api.github.com/repos/TheVolecitor/hdhub/commits/main" \
             "${{ secrets.PAT }}"
 
+          fetch_sha "fmhywebstremio" \
+            "https://api.github.com/repos/RisPNG/fmhywebstremio/commits/main" \
+            "${{ secrets.PAT }}"
+
           process_repo() {
             local NAME="$1" PRIVATE="$2"
             local SAFE="${NAME//[^a-z0-9]/_}"
@@ -75,6 +79,7 @@ jobs:
           }
 
           process_repo "hdhub" "true"
+          process_repo "fmhywebstremio" "false"
 
           if [ "$(jq 'length' <<< "$INCLUDES")" -eq 0 ]; then
             echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
@@ -98,6 +103,7 @@ jobs:
       matrix: ${{ fromJson(needs.check.outputs.matrix) }}
     outputs:
       hdhub_sha: ${{ steps.record.outputs.hdhub_sha }}
+      fmhywebstremio_sha: ${{ steps.record.outputs.fmhywebstremio_sha }}
     steps:
       - uses: docker/login-action@v4
         with:
@@ -132,6 +138,31 @@ jobs:
           RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js
           EXPOSE 7000
           CMD ["node", "server.js"]
+          DOCKERFILE
+
+      - name: Checkout fmhywebstremio
+        if: ${{ matrix.name == 'fmhywebstremio' }}
+        uses: actions/checkout@v7
+        with:
+          repository: RisPNG/fmhywebstremio
+          ref: main
+          token: ${{ secrets.PAT }}
+          path: _source
+
+      - name: Write Dockerfile for fmhywebstremio
+        if: ${{ matrix.name == 'fmhywebstremio' }}
+        run: |
+          cat > _source/Dockerfile << 'DOCKERFILE'
+          FROM node:22-alpine
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci
+          COPY . .
+          RUN npm run build && npm prune --omit=dev
+          ENV NODE_ENV=production
+          ENV PORT=51546
+          EXPOSE 51546
+          CMD ["node", "dist/index.js"]
           DOCKERFILE
 
       - uses: docker/build-push-action@v7
@@ -182,6 +213,7 @@ jobs:
           }
 
           update_sha "hdhub" "${{ needs.build.outputs.hdhub_sha }}"
+          update_sha "fmhywebstremio" "${{ needs.build.outputs.fmhywebstremio_sha }}"
 
           echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
 
@@ -212,7 +244,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [hdhub]
+        name: [hdhub, fmhywebstremio]
     steps:
       - uses: actions/delete-package-versions@v5
         with:
