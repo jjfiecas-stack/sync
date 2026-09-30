@@ -84,11 +84,6 @@ jobs:
             "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main" \
             "${{ secrets.PAT }}"
 
-          fetch_sha \
-            "magnetio" \
-            "https://api.github.com/repos/peterdsp/Magnetio/commits/main" \
-            "${{ secrets.PAT }}"
-
           # ------------------------------------------------------------
           # Process standard repository
           # ------------------------------------------------------------
@@ -157,56 +152,6 @@ jobs:
             "Dockerfile"
 
           # ------------------------------------------------------------
-          # MAGNETIO
-          #
-          # One upstream SHA produces:
-          #
-          # magnetio-addon
-          # magnetio-scraper
-          # ------------------------------------------------------------
-
-          MAGNETIO_SHA=$(cat /tmp/sha_magnetio 2>/dev/null || true)
-          MAGNETIO_STORED=$(grep "^magnetio=" "$SHA_FILE" | cut -d= -f2 || true)
-
-          if [ -z "$MAGNETIO_SHA" ]; then
-
-            echo "::warning::No SHA retrieved for Magnetio"
-
-          elif [ "$MAGNETIO_SHA" = "$MAGNETIO_STORED" ]; then
-
-            echo "magnetio: up to date"
-
-          else
-
-            echo "magnetio: new commit $MAGNETIO_SHA"
-
-            INCLUDES=$(jq -cn \
-              --argjson cur "$INCLUDES" \
-              --arg sha "$MAGNETIO_SHA" \
-              '$cur + [
-                {
-                  "name": "magnetio-addon",
-                  "source": "magnetio",
-                  "platforms": "linux/arm64",
-                  "sha": $sha,
-                  "private": "false",
-                  "context": "_source/addon",
-                  "dockerfile": "Dockerfile"
-                },
-                {
-                  "name": "magnetio-scraper",
-                  "source": "magnetio",
-                  "platforms": "linux/arm64",
-                  "sha": $sha,
-                  "private": "false",
-                  "context": "_source/scraper",
-                  "dockerfile": "Dockerfile"
-                }
-              ]')
-
-          fi
-
-          # ------------------------------------------------------------
           # Output matrix
           # ------------------------------------------------------------
 
@@ -251,7 +196,6 @@ jobs:
     outputs:
       hdhub_sha: ${{ steps.record.outputs.hdhub_sha }}
       webstreamr_mbg_sha: ${{ steps.record.outputs.webstreamr_mbg_sha }}
-      magnetio_sha: ${{ steps.record.outputs.magnetio_sha }}
 
     steps:
 
@@ -353,24 +297,6 @@ jobs:
 
 
       # ============================================================
-      # MAGNETIO
-      # ============================================================
-
-      - name: Checkout Magnetio
-        if: >-
-          ${{
-            matrix.name == 'magnetio-addon' ||
-            matrix.name == 'magnetio-scraper'
-          }}
-        uses: actions/checkout@v7
-        with:
-          repository: peterdsp/Magnetio
-          ref: ${{ matrix.sha }}
-          token: ${{ secrets.PAT }}
-          path: _source
-
-
-      # ============================================================
       # BUILD + PUSH
       # ============================================================
 
@@ -404,13 +330,6 @@ jobs:
           SAFE_NAME=$(echo "${{ matrix.name }}" | tr '-' '_')
 
           echo "${SAFE_NAME}_sha=${{ matrix.sha }}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${{ matrix.name }}" == "magnetio-addon" || \
-                "${{ matrix.name }}" == "magnetio-scraper" ]]; then
-
-            echo "magnetio_sha=${{ matrix.sha }}" >> "$GITHUB_OUTPUT"
-
-          fi
 
 
   # ================================================================
@@ -471,10 +390,6 @@ jobs:
             "webstreamr-mbg" \
             "${{ needs.build.outputs.webstreamr_mbg_sha }}"
 
-          update_sha \
-            "magnetio" \
-            "${{ needs.build.outputs.magnetio_sha }}"
-
           echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
 
 
@@ -530,8 +445,6 @@ jobs:
         name:
           - hdhub
           - webstreamr-mbg
-          - magnetio-addon
-          - magnetio-scraper
 
     steps:
 
