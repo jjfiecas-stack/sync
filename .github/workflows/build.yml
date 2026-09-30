@@ -2,8 +2,8 @@ name: Build images
 
 on:
   schedule:
-    - cron: '0 * * * *'   # hourly  — upstream repo checks
-    - cron: '0 0 * * *'   # daily   — action/image version updates
+    - cron: '0 * * * *'
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -15,13 +15,21 @@ permissions:
   contents: write
 
 jobs:
+
+  # ================================================================
+  # CHECK UPSTREAM REPOSITORIES
+  # ================================================================
+
   check:
     runs-on: ubuntu-latest
+
     if: ${{ github.event.schedule != '0 0 * * *' }}
+
     outputs:
       matrix: ${{ steps.check.outputs.matrix }}
 
     steps:
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -30,55 +38,60 @@ jobs:
       - name: Check for upstream changes
         id: check
         run: |
+          set -e
+
           SHA_FILE=".last_shas"
           touch "$SHA_FILE"
+
           INCLUDES="[]"
 
           fetch_sha() {
-            local NAME="$1" URL="$2" TOKEN="$3"
+            local NAME="$1"
+            local URL="$2"
+            local TOKEN="$3"
+
+            local SAFE="${NAME//[^a-z0-9]/_}"
             local HTTP_CODE
 
-            HTTP_CODE=$(curl -s --retry 3 --retry-delay 2 \
+            HTTP_CODE=$(curl -sS --retry 3 --retry-delay 2 \
               -H "User-Agent: github-actions" \
               -H "Authorization: Bearer $TOKEN" \
-              -o "/tmp/resp_${NAME//[^a-z0-9]/_}" \
+              -o "/tmp/resp_${SAFE}" \
               -w "%{http_code}" \
               "$URL")
 
             if [ "$HTTP_CODE" != "200" ]; then
-              echo "::warning::Fetch for $NAME failed with HTTP $HTTP_CODE (check token/permissions)"
+              echo "::warning::Fetch for $NAME failed with HTTP $HTTP_CODE"
               return
             fi
 
             jq -r '.sha // empty' \
-              "/tmp/resp_${NAME//[^a-z0-9]/_}" \
-              > "/tmp/sha_${NAME//[^a-z0-9]/_}"
+              "/tmp/resp_${SAFE}" \
+              > "/tmp/sha_${SAFE}"
           }
 
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
           # Fetch upstream SHAs
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
 
-          fetch_sha "hdhub" \
+          fetch_sha \
+            "hdhub" \
             "https://api.github.com/repos/TheVolecitor/hdhub/commits/main" \
             "${{ secrets.PAT }}"
 
-          fetch_sha "webstreamr-mbg" \
+          fetch_sha \
+            "webstreamr-mbg" \
             "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main" \
             "${{ secrets.PAT }}"
 
-          fetch_sha "magnetio" \
+          fetch_sha \
+            "magnetio" \
             "https://api.github.com/repos/peterdsp/Magnetio/commits/main" \
             "${{ secrets.PAT }}"
 
-          # ─────────────────────────────────────────────────────────────
-          # Process repository
-          #
-          # NAME       = upstream tracking name / package name
-          # PRIVATE    = informational flag
-          # CONTEXT    = Docker build context
-          # DOCKERFILE = Dockerfile inside build context
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
+          # Process standard repository
+          # ------------------------------------------------------------
 
           process_repo() {
             local NAME="$1"
@@ -90,21 +103,21 @@ jobs:
             local LATEST
             local STORED
 
-            LATEST=$(cat "/tmp/sha_${SAFE}" 2>/dev/null)
+            LATEST=$(cat "/tmp/sha_${SAFE}" 2>/dev/null || true)
 
             if [ -z "$LATEST" ]; then
-              echo "::warning::No SHA retrieved for $NAME, skipping this run"
+              echo "::warning::No SHA retrieved for $NAME"
               return
             fi
 
-            STORED=$(grep "^${NAME}=" "$SHA_FILE" | cut -d= -f2)
+            STORED=$(grep "^${NAME}=" "$SHA_FILE" | cut -d= -f2 || true)
 
             if [ "$LATEST" = "$STORED" ]; then
-              echo "$NAME: up to date ($LATEST)"
+              echo "$NAME: up to date"
               return
             fi
 
-            echo "$NAME: new commit $LATEST (was: ${STORED:-none})"
+            echo "$NAME: new commit $LATEST"
 
             INCLUDES=$(jq -cn \
               --argjson cur "$INCLUDES" \
@@ -123,46 +136,49 @@ jobs:
               }]')
           }
 
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
           # HDHUB
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
 
           process_repo \
             "hdhub" \
             "true" \
-            "." \
+            "_source" \
             "Dockerfile"
 
-          # ─────────────────────────────────────────────────────────────
-          # WEBSTREAMR MBG
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
+          # WEBSTREAMR
+          # ------------------------------------------------------------
 
           process_repo \
             "webstreamr-mbg" \
             "false" \
-            "." \
+            "_source" \
             "Dockerfile"
 
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
           # MAGNETIO
           #
-          # One upstream repository produces TWO GHCR images:
+          # One upstream SHA produces:
           #
           # magnetio-addon
           # magnetio-scraper
-          #
-          # Both use the exact same upstream SHA.
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
 
-          MAGNETIO_SHA=$(cat "/tmp/sha_magnetio" 2>/dev/null)
-          MAGNETIO_STORED=$(grep "^magnetio=" "$SHA_FILE" | cut -d= -f2)
+          MAGNETIO_SHA=$(cat /tmp/sha_magnetio 2>/dev/null || true)
+          MAGNETIO_STORED=$(grep "^magnetio=" "$SHA_FILE" | cut -d= -f2 || true)
 
           if [ -z "$MAGNETIO_SHA" ]; then
-            echo "::warning::No SHA retrieved for magnetio, skipping Magnetio"
+
+            echo "::warning::No SHA retrieved for Magnetio"
+
           elif [ "$MAGNETIO_SHA" = "$MAGNETIO_STORED" ]; then
-            echo "magnetio: up to date ($MAGNETIO_SHA)"
+
+            echo "magnetio: up to date"
+
           else
-            echo "magnetio: new commit $MAGNETIO_SHA (was: ${MAGNETIO_STORED:-none})"
+
+            echo "magnetio: new commit $MAGNETIO_SHA"
 
             INCLUDES=$(jq -cn \
               --argjson cur "$INCLUDES" \
@@ -187,24 +203,35 @@ jobs:
                   "dockerfile": "Dockerfile"
                 }
               ]')
+
           fi
 
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
           # Output matrix
-          # ─────────────────────────────────────────────────────────────
+          # ------------------------------------------------------------
 
           if [ "$(jq 'length' <<< "$INCLUDES")" -eq 0 ]; then
+
             echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+
           else
+
             {
               echo "matrix<<EOF"
               jq -cn --argjson i "$INCLUDES" '{"include":$i}'
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
+
           fi
+
+
+  # ================================================================
+  # BUILD
+  # ================================================================
 
   build:
     runs-on: ubuntu-latest
+
     needs: check
 
     if: >-
@@ -227,9 +254,10 @@ jobs:
       magnetio_sha: ${{ steps.record.outputs.magnetio_sha }}
 
     steps:
-      # ─────────────────────────────────────────────────────────────
-      # GHCR login
-      # ─────────────────────────────────────────────────────────────
+
+      # ------------------------------------------------------------
+      # GHCR
+      # ------------------------------------------------------------
 
       - uses: docker/login-action@v4
         with:
@@ -237,32 +265,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ─────────────────────────────────────────────────────────────
-      # Multi-architecture support
-      # ─────────────────────────────────────────────────────────────
+      # ------------------------------------------------------------
+      # QEMU
+      #
+      # Required because GitHub-hosted runners are x86_64 while
+      # your VPS needs linux/arm64 images.
+      # ------------------------------------------------------------
 
       - uses: docker/setup-qemu-action@v4
         with:
-          image: tonistiigi/binfmt:qemu-v8.1.5
+          platforms: arm64
 
       - uses: docker/setup-buildx-action@v4
 
-      # ─────────────────────────────────────────────────────────────
-      # Checkout HDHUB
-      # ─────────────────────────────────────────────────────────────
+
+      # ============================================================
+      # HDHUB
+      # ============================================================
 
       - name: Checkout hdhub
         if: ${{ matrix.name == 'hdhub' }}
         uses: actions/checkout@v7
         with:
           repository: TheVolecitor/hdhub
-          ref: main
+          ref: ${{ matrix.sha }}
           token: ${{ secrets.PAT }}
           path: _source
-
-      # ─────────────────────────────────────────────────────────────
-      # Write Dockerfile for HDHUB
-      # ─────────────────────────────────────────────────────────────
 
       - name: Write Dockerfile for hdhub
         if: ${{ matrix.name == 'hdhub' }}
@@ -274,7 +302,7 @@ jobs:
 
           COPY package*.json ./
 
-          RUN npm ci --omit=dev
+          RUN npm ci --omit=dev --no-audit --no-fund
 
           COPY . .
 
@@ -285,22 +313,19 @@ jobs:
           CMD ["node", "server.js"]
           DOCKERFILE
 
-      # ─────────────────────────────────────────────────────────────
-      # Checkout WebStreamr MBG
-      # ─────────────────────────────────────────────────────────────
+
+      # ============================================================
+      # WEBSTREAMR
+      # ============================================================
 
       - name: Checkout webstreamr-mbg
         if: ${{ matrix.name == 'webstreamr-mbg' }}
         uses: actions/checkout@v7
         with:
           repository: newman2x/WebStreamrMBG
-          ref: main
+          ref: ${{ matrix.sha }}
           token: ${{ secrets.PAT }}
           path: _source
-
-      # ─────────────────────────────────────────────────────────────
-      # Write Dockerfile for WebStreamr MBG
-      # ─────────────────────────────────────────────────────────────
 
       - name: Write Dockerfile for webstreamr-mbg
         if: ${{ matrix.name == 'webstreamr-mbg' }}
@@ -312,7 +337,7 @@ jobs:
 
           COPY package*.json ./
 
-          RUN npm ci
+          RUN npm ci --no-audit --no-fund
 
           COPY . .
 
@@ -326,9 +351,10 @@ jobs:
           CMD ["node", "dist/index.js"]
           DOCKERFILE
 
-      # ─────────────────────────────────────────────────────────────
-      # Checkout Magnetio
-      # ─────────────────────────────────────────────────────────────
+
+      # ============================================================
+      # MAGNETIO
+      # ============================================================
 
       - name: Checkout Magnetio
         if: >-
@@ -339,21 +365,25 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: peterdsp/Magnetio
-          ref: main
+          ref: ${{ matrix.sha }}
           token: ${{ secrets.PAT }}
           path: _source
 
-      # ─────────────────────────────────────────────────────────────
-      # Build + Push
-      # ─────────────────────────────────────────────────────────────
+
+      # ============================================================
+      # BUILD + PUSH
+      # ============================================================
 
       - name: Build and push image
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.context }}/${{ matrix.dockerfile }}
+
           platforms: ${{ matrix.platforms }}
+
           push: true
+
           provenance: false
 
           tags: |
@@ -363,9 +393,10 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
 
-      # ─────────────────────────────────────────────────────────────
-      # Record successful build
-      # ─────────────────────────────────────────────────────────────
+
+      # ============================================================
+      # RECORD SUCCESS
+      # ============================================================
 
       - name: Record successful build
         id: record
@@ -374,16 +405,21 @@ jobs:
 
           echo "${SAFE_NAME}_sha=${{ matrix.sha }}" >> "$GITHUB_OUTPUT"
 
-          if [[ "${{ matrix.name }}" == "magnetio-addon" || "${{ matrix.name }}" == "magnetio-scraper" ]]; then
+          if [[ "${{ matrix.name }}" == "magnetio-addon" || \
+                "${{ matrix.name }}" == "magnetio-scraper" ]]; then
+
             echo "magnetio_sha=${{ matrix.sha }}" >> "$GITHUB_OUTPUT"
+
           fi
 
-  # ───────────────────────────────────────────────────────────────
-  # Update .last_shas ONLY after ALL builds succeed
-  # ───────────────────────────────────────────────────────────────
+
+  # ================================================================
+  # UPDATE SHA FILE
+  # ================================================================
 
   update-sha-file:
     runs-on: ubuntu-latest
+
     needs: [check, build]
 
     if: ${{ always() && needs.build.result == 'success' }}
@@ -392,14 +428,16 @@ jobs:
       contents: write
 
     steps:
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update SHA file for successfully built images only
+      - name: Update SHA file
         run: |
           SHA_FILE=".last_shas"
+
           touch "$SHA_FILE"
 
           CHANGED=false
@@ -411,24 +449,34 @@ jobs:
             [ -z "$SHA" ] && return
 
             if grep -q "^${NAME}=" "$SHA_FILE"; then
-              sed -i "s/^${NAME}=.*/${NAME}=${SHA}/" "$SHA_FILE"
+
+              sed -i \
+                "s/^${NAME}=.*/${NAME}=${SHA}/" \
+                "$SHA_FILE"
+
             else
+
               printf '%s=%s\n' "$NAME" "$SHA" >> "$SHA_FILE"
+
             fi
 
             CHANGED=true
           }
 
-          update_sha "hdhub" \
+          update_sha \
+            "hdhub" \
             "${{ needs.build.outputs.hdhub_sha }}"
 
-          update_sha "webstreamr-mbg" \
+          update_sha \
+            "webstreamr-mbg" \
             "${{ needs.build.outputs.webstreamr_mbg_sha }}"
 
-          update_sha "magnetio" \
+          update_sha \
+            "magnetio" \
             "${{ needs.build.outputs.magnetio_sha }}"
 
           echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
+
 
       - name: Commit SHA file
         if: ${{ env.CHANGED == 'true' }}
@@ -439,25 +487,35 @@ jobs:
           git add .last_shas
 
           if git diff --staged --quiet; then
-            echo "No SHA changes to commit"
+
+            echo "No SHA changes"
+
           else
-            git commit -m "chore: update last SHAs [skip ci]"
+
+            git commit \
+              -m "chore: update last SHAs [skip ci]"
 
             for i in 1 2 3 4 5; do
+
               git pull --rebase origin "${{ github.ref_name }}" && \
               git push origin "${{ github.ref_name }}" && break
 
               echo "Push attempt $i failed, retrying..."
+
               sleep $((RANDOM % 5 + 1))
+
             done
+
           fi
 
-  # ───────────────────────────────────────────────────────────────
-  # Cleanup old GHCR versions
-  # ───────────────────────────────────────────────────────────────
+
+  # ================================================================
+  # CLEANUP GHCR
+  # ================================================================
 
   cleanup:
     runs-on: ubuntu-latest
+
     needs: [check, build]
 
     if: ${{ always() && needs.build.result == 'success' }}
@@ -467,6 +525,7 @@ jobs:
 
     strategy:
       fail-fast: false
+
       matrix:
         name:
           - hdhub
@@ -475,6 +534,7 @@ jobs:
           - magnetio-scraper
 
     steps:
+
       - uses: actions/delete-package-versions@v5
         with:
           package-name: ${{ matrix.name }}
@@ -482,9 +542,10 @@ jobs:
           min-versions-to-keep: 2
           delete-only-untagged-versions: false
 
-  # ───────────────────────────────────────────────────────────────
-  # Daily GitHub Action / Node version updates
-  # ───────────────────────────────────────────────────────────────
+
+  # ================================================================
+  # DAILY VERSION UPDATES
+  # ================================================================
 
   update-versions:
     runs-on: ubuntu-latest
@@ -504,6 +565,7 @@ jobs:
       contents: write
 
     steps:
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -512,15 +574,18 @@ jobs:
       - name: Check and update versions
         run: |
           WORKFLOW=".github/workflows/build.yml"
+
           CHANGED=false
 
           gh_latest_major() {
+
             curl -sf --retry 3 \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/$1/releases/latest" \
               | jq -r '.tag_name // empty' \
               | grep -oP '^v[0-9]+' \
               > "/tmp/ver_$(echo "$1" | tr '/' '_')"
+
           }
 
           gh_latest_major "actions/checkout"                &
@@ -530,86 +595,128 @@ jobs:
           gh_latest_major "docker/setup-buildx-action"      &
           gh_latest_major "docker/build-push-action"        &
 
-          curl -sf --retry 3 https://nodejs.org/dist/index.json \
-            | jq -r '[.[] | select(.lts != false and .lts != null)]
-                      | sort_by(.date) | reverse | .[0].version
-                      | ltrimstr("v") | split(".") | .[0]' \
+          curl -sf --retry 3 \
+            https://nodejs.org/dist/index.json \
+            | jq -r '
+                [
+                  .[]
+                  | select(.lts != false and .lts != null)
+                ]
+                | sort_by(.date)
+                | reverse
+                | .[0].version
+                | ltrimstr("v")
+                | split(".")
+                | .[0]
+              ' \
             > /tmp/ver_node &
 
           wait
 
+
           update_action() {
+
             local ACTION="$1"
             local REPO="$2"
 
             local LATEST
             local CURRENT
 
-            LATEST=$(cat "/tmp/ver_$(echo "$REPO" | tr '/' '_')" 2>/dev/null)
+            LATEST=$(
+              cat "/tmp/ver_$(echo "$REPO" | tr '/' '_')" \
+              2>/dev/null
+            )
 
             if [ -z "$LATEST" ]; then
-              echo "  [skip] could not fetch latest for $ACTION"
+
+              echo "[skip] $ACTION"
+
               return
+
             fi
 
-            CURRENT=$(grep -oP \
-              "(?<=$(echo "$ACTION" | sed 's|/|\\/|g')@)v[0-9]+" \
-              "$WORKFLOW" \
-              | sort -V \
-              | tail -1)
+            CURRENT=$(
+              grep -oP \
+                "(?<=$(echo "$ACTION" | sed 's|/|\\/|g')@)v[0-9]+" \
+                "$WORKFLOW" \
+                | sort -V \
+                | tail -1
+            )
 
             if [ -z "$CURRENT" ]; then
-              echo "  [skip] $ACTION not found in workflow"
+
+              echo "[skip] $ACTION not found"
+
               return
+
             fi
 
             if [ "$CURRENT" = "$LATEST" ]; then
-              echo "  [ok]   $ACTION @ $CURRENT"
+
+              echo "[ok] $ACTION @ $CURRENT"
+
             else
-              echo "  [bump] $ACTION  $CURRENT -> $LATEST"
+
+              echo "[bump] $ACTION $CURRENT -> $LATEST"
 
               sed -i \
                 "s|${ACTION}@${CURRENT}|${ACTION}@${LATEST}|g" \
                 "$WORKFLOW"
 
               CHANGED=true
+
             fi
           }
 
+
           update_node() {
+
             local LATEST
             local CURRENT
 
             LATEST=$(cat /tmp/ver_node 2>/dev/null)
 
             if [ -z "$LATEST" ]; then
-              echo "  [skip] could not fetch Node LTS version"
+
+              echo "[skip] Node LTS"
+
               return
+
             fi
 
-            CURRENT=$(grep -oP \
-              'node:\K[0-9]+(?=-alpine)' \
-              "$WORKFLOW" \
-              | sort -rn \
-              | head -1)
+            CURRENT=$(
+              grep -oP \
+                'node:\K[0-9]+(?=-alpine)' \
+                "$WORKFLOW" \
+                | sort -rn \
+                | head -1
+            )
 
             if [ -z "$CURRENT" ]; then
-              echo "  [skip] no node:-alpine references found"
+
+              echo "[skip] Node image not found"
+
               return
+
             fi
 
             if [ "$CURRENT" = "$LATEST" ]; then
-              echo "  [ok]   node:${CURRENT}-alpine"
+
+              echo "[ok] node:${CURRENT}-alpine"
+
             else
-              echo "  [bump] node:${CURRENT}-alpine -> node:${LATEST}-alpine"
+
+              echo "[bump] node:${CURRENT}-alpine -> node:${LATEST}-alpine"
 
               sed -i \
                 "s|node:${CURRENT}-alpine|node:${LATEST}-alpine|g" \
                 "$WORKFLOW"
 
               CHANGED=true
+
             fi
           }
+
 
           echo "=== GitHub Actions ==="
 
@@ -637,11 +744,14 @@ jobs:
             "docker/build-push-action" \
             "docker/build-push-action"
 
-          echo "=== Node.js base image ==="
+
+          echo "=== Node.js ==="
 
           update_node
 
+
           echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
+
 
       - name: Commit version updates
         if: ${{ env.CHANGED == 'true' }}
@@ -655,9 +765,12 @@ jobs:
             -m "chore: update action and image versions [skip ci]"
 
           for i in 1 2 3 4 5; do
+
             git pull --rebase origin "${{ github.ref_name }}" && \
             git push origin "${{ github.ref_name }}" && break
 
             echo "Push attempt $i failed, retrying..."
+
             sleep $((RANDOM % 5 + 1))
+
           done
