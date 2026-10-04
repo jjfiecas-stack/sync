@@ -2,8 +2,8 @@ name: Build images
 
 on:
   schedule:
-    - cron: "0 * * * *"
-    - cron: "0 0 * * *"
+    - cron: '0 * * * *'
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -15,263 +15,593 @@ permissions:
   contents: write
 
 jobs:
+
+  # ================================================================
+  # CHECK UPSTREAM REPOSITORIES
+  # ================================================================
   check:
     runs-on: ubuntu-latest
+    if: ${{ github.event.schedule != '0 0 * * *' }}
 
     outputs:
-      hdhub_sha: ${{ steps.hdhub.outputs.sha }}
+      matrix: ${{ steps.check.outputs.matrix }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get HDHub SHA
-        id: hdhub
+      - name: Check for upstream changes
+        id: check
         run: |
-          SHA=$(git ls-remote https://github.com/TheVolecitor/hdhub.git refs/heads/main | cut -f1)
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "HDHub SHA: $SHA"
+          set -e
 
-  process_repo:
-    needs: check
-    runs-on: ubuntu-latest
+          SHA_FILE=".last_shas"
+          touch "$SHA_FILE"
 
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+          INCLUDES="[]"
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+          fetch_sha() {
+            local NAME="$1"
+            local URL="$2"
+            local TOKEN="$3"
+            local SAFE="${NAME//[^a-z0-9]/_}"
+            local HTTP_CODE
 
-      - name: Read previous SHAs
-        id: previous
-        run: |
-          if [ -f .last_shas ]; then
-            cat .last_shas
+            HTTP_CODE=$(curl -sS --retry 3 --retry-delay 2 \
+              -H "User-Agent: github-actions" \
+              -H "Authorization: Bearer $TOKEN" \
+              -o "/tmp/resp_${SAFE}" \
+              -w "%{http_code}" \
+              "$URL")
+
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "::warning::Fetch for $NAME failed with HTTP $HTTP_CODE"
+              return
+            fi
+
+            jq -r '.sha // empty' \
+              "/tmp/resp_${SAFE}" \
+              > "/tmp/sha_${SAFE}"
+          }
+
+          # ------------------------------------------------------------
+          # Fetch upstream SHAs
+          # ------------------------------------------------------------
+
+          fetch_sha \
+            "hdhub" \
+            "https://api.github.com/repos/TheVolecitor/hdhub/commits/main" \
+            "${{ secrets.PAT }}"
+
+          fetch_sha \
+            "webstreamr-mbg" \
+            "https://api.github.com/repos/newman2x/WebStreamrMBG/commits/main" \
+            "${{ secrets.PAT }}"
+
+          # ------------------------------------------------------------
+          # Process standard repository
+          # ------------------------------------------------------------
+
+          process_repo() {
+            local NAME="$1"
+            local PRIVATE="$2"
+            local CONTEXT="$3"
+            local DOCKERFILE="$4"
+            local SAFE="${NAME//[^a-z0-9]/_}"
+            local LATEST
+            local STORED
+
+            LATEST=$(cat "/tmp/sha_${SAFE}" 2>/dev/null || true)
+
+            if [ -z "$LATEST" ]; then
+              echo "::warning::No SHA retrieved for $NAME"
+              return
+            fi
+
+            STORED=$(grep "^${NAME}=" "$SHA_FILE" | cut -d= -f2 || true)
+
+            if [ "$LATEST" = "$STORED" ]; then
+              echo "$NAME: up to date"
+              return
+            fi
+
+            echo "$NAME: new commit $LATEST"
+
+            INCLUDES=$(jq -cn \
+              --argjson cur "$INCLUDES" \
+              --arg name "$NAME" \
+              --arg sha "$LATEST" \
+              --arg private "$PRIVATE" \
+              --arg context "$CONTEXT" \
+              --arg dockerfile "$DOCKERFILE" \
+              '$cur + [{
+                "name": $name,
+                "platforms": "linux/arm64",
+                "sha": $sha,
+                "private": $private,
+                "context": $context,
+                "dockerfile": $dockerfile
+              }]')
+          }
+
+          # ------------------------------------------------------------
+          # HDHUB
+          # ------------------------------------------------------------
+
+          process_repo \
+            "hdhub" \
+            "true" \
+            "_source" \
+            "Dockerfile"
+
+          # ------------------------------------------------------------
+          # WEBSTREAMR
+          # ------------------------------------------------------------
+
+          process_repo \
+            "webstreamr-mbg" \
+            "false" \
+            "_source" \
+            "Dockerfile"
+
+          # ------------------------------------------------------------
+          # Output matrix
+          # ------------------------------------------------------------
+
+          if [ "$(jq 'length' <<< "$INCLUDES")" -eq 0 ]; then
+            echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
           else
-            touch .last_shas
+            {
+              echo "matrix<<EOF"
+              jq -cn --argjson i "$INCLUDES" '{"include":$i}'
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build matrix
-        id: matrix
-        env:
-          HDHUB_SHA: ${{ needs.check.outputs.hdhub_sha }}
-        run: |
-          python3 <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          previous = {}
-
-          if Path(".last_shas").exists():
-              for line in Path(".last_shas").read_text().splitlines():
-                  line = line.strip()
-
-                  if not line or "=" not in line:
-                      continue
-
-                  key, value = line.split("=", 1)
-                  previous[key.strip()] = value.strip()
-
-          current = {
-              "hdhub": os.environ["HDHUB_SHA"],
-          }
-
-          repos = {
-              "hdhub": {
-                  "sha_key": "hdhub",
-                  "repository": "TheVolecitor/hdhub",
-                  "context": ".",
-                  "dockerfile": "Dockerfile",
-                  "platforms": "linux/arm64",
-                  "private": "false",
-              },
-          }
-
-          matrix = []
-
-          for name, repo in repos.items():
-              sha = current[name]
-
-              if previous.get(repo["sha_key"]) != sha:
-                  matrix.append({
-                      "name": name,
-                      "repository": repo["repository"],
-                      "sha": sha,
-                      "private": repo["private"],
-                      "context": repo["context"],
-                      "dockerfile": repo["dockerfile"],
-                      "platforms": repo["platforms"],
-                  })
-
-          output = {
-              "include": matrix
-          }
-
-          print(json.dumps(output, indent=2))
-
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write("matrix=" + json.dumps(output) + "\n")
-          PY
-
+  # ================================================================
+  # BUILD
+  # ================================================================
   build:
-    needs:
-      - check
-      - process_repo
+    runs-on: ubuntu-latest
+    needs: check
 
-    if: needs.process_repo.outputs.matrix != '{"include":[]}'
+    if: >-
+      ${{ needs.check.outputs.matrix != '' &&
+          fromJson(needs.check.outputs.matrix).include[0] != null }}
+
+    permissions:
+      packages: write
+      contents: read
 
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.process_repo.outputs.matrix) }}
+      matrix: ${{ fromJson(needs.check.outputs.matrix) }}
 
-    runs-on: ubuntu-latest
+    outputs:
+      hdhub_sha: ${{ steps.record.outputs.hdhub_sha }}
+      webstreamr_mbg_sha: ${{ steps.record.outputs.webstreamr_mbg_sha }}
 
     steps:
-      - name: Checkout upstream repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ matrix.repository }}
-          ref: ${{ matrix.sha }}
-          fetch-depth: 1
 
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
+      # ------------------------------------------------------------
+      # GHCR
+      # ------------------------------------------------------------
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare HDHub Dockerfile
-        if: matrix.name == 'hdhub'
+      # ------------------------------------------------------------
+      # QEMU
+      #
+      # Required because GitHub-hosted runners are x86_64 while
+      # your VPS needs linux/arm64 images.
+      # ------------------------------------------------------------
+
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4
+
+      # ============================================================
+      # HDHUB
+      # ============================================================
+
+      - name: Checkout hdhub
+        if: ${{ matrix.name == 'hdhub' }}
+        uses: actions/checkout@v7
+        with:
+          repository: TheVolecitor/hdhub
+          ref: ${{ matrix.sha }}
+          token: ${{ secrets.PAT }}
+          path: _source
+
+      - name: Write Dockerfile for hdhub
+        if: ${{ matrix.name == 'hdhub' }}
         run: |
-          cat > Dockerfile.custom <<'EOF'
+          cat > _source/Dockerfile << 'DOCKERFILE'
           FROM node:22-alpine
 
           WORKDIR /app
 
           COPY package*.json ./
-          RUN npm ci --omit=dev
+
+          RUN npm ci --omit=dev --no-audit --no-fund
 
           COPY . .
+
+          RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js
 
           EXPOSE 7000
 
           CMD ["node", "server.js"]
-          EOF
+          DOCKERFILE
 
-      - name: Build and push
+      # ============================================================
+      # WEBSTREAMR
+      # ============================================================
+
+      - name: Checkout webstreamr-mbg
+        if: ${{ matrix.name == 'webstreamr-mbg' }}
+        uses: actions/checkout@v7
+        with:
+          repository: newman2x/WebStreamrMBG
+          ref: ${{ matrix.sha }}
+          token: ${{ secrets.PAT }}
+          path: _source
+
+      - name: Write Dockerfile for webstreamr-mbg
+        if: ${{ matrix.name == 'webstreamr-mbg' }}
+        run: |
+          cat > _source/Dockerfile << 'DOCKERFILE'
+          FROM node:22-alpine
+
+          WORKDIR /app
+
+          COPY package*.json ./
+
+          RUN npm ci --no-audit --no-fund
+
+          COPY . .
+
+          RUN npm run build && npm prune --omit=dev
+
+          ENV NODE_ENV=production
+          ENV PORT=51546
+
+          EXPOSE 51546
+
+          CMD ["node", "dist/index.js"]
+          DOCKERFILE
+
+      # ============================================================
+      # BUILD + PUSH
+      # ============================================================
+
+      - name: Build and push image
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
-          file: Dockerfile.custom
+          file: ${{ matrix.context }}/${{ matrix.dockerfile }}
           platforms: ${{ matrix.platforms }}
           push: true
+          provenance: false
           tags: |
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:${{ matrix.sha }}
           cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
 
+      # ============================================================
+      # RECORD SUCCESS
+      # ============================================================
+
+      - name: Record successful build
+        id: record
+        run: |
+          SAFE_NAME=$(echo "${{ matrix.name }}" | tr '-' '_')
+          echo "${SAFE_NAME}_sha=${{ matrix.sha }}" >> "$GITHUB_OUTPUT"
+
+  # ================================================================
+  # UPDATE SHA FILE
+  # ================================================================
   update-sha-file:
+    runs-on: ubuntu-latest
     needs:
       - check
-      - process_repo
       - build
 
-    if: needs.process_repo.outputs.matrix != '{"include":[]}'
+    if: ${{ always() && needs.build.result == 'success' }}
 
-    runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update SHAs
+      - name: Update SHA file
         run: |
-          cat > .last_shas <<EOF
-          hdhub=${{ needs.check.outputs.hdhub_sha }}
-          EOF
+          SHA_FILE=".last_shas"
+          touch "$SHA_FILE"
 
-      - name: Commit SHA changes
+          CHANGED=false
+
+          update_sha() {
+            local NAME="$1"
+            local SHA="$2"
+
+            [ -z "$SHA" ] && return
+
+            if grep -q "^${NAME}=" "$SHA_FILE"; then
+              sed -i \
+                "s/^${NAME}=.*/${NAME}=${SHA}/" \
+                "$SHA_FILE"
+            else
+              printf '%s=%s\n' "$NAME" "$SHA" >> "$SHA_FILE"
+            fi
+
+            CHANGED=true
+          }
+
+          update_sha \
+            "hdhub" \
+            "${{ needs.build.outputs.hdhub_sha }}"
+
+          update_sha \
+            "webstreamr-mbg" \
+            "${{ needs.build.outputs.webstreamr_mbg_sha }}"
+
+          echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
+
+      - name: Commit SHA file
+        if: ${{ env.CHANGED == 'true' }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
 
           git add .last_shas
 
-          if git diff --cached --quiet; then
-            echo "No SHA changes to commit."
-            exit 0
+          if git diff --staged --quiet; then
+            echo "No SHA changes"
+          else
+            git commit \
+              -m "chore: update last SHAs [skip ci]"
+
+            for i in 1 2 3 4 5; do
+              git pull --rebase origin "${{ github.ref_name }}" && \
+              git push origin "${{ github.ref_name }}" && break
+
+              echo "Push attempt $i failed, retrying..."
+              sleep $((RANDOM % 5 + 1))
+            done
           fi
 
-          git commit -m "Update HDHub SHA"
-          git push
-
+  # ================================================================
+  # CLEANUP GHCR
+  # ================================================================
   cleanup:
+    runs-on: ubuntu-latest
     needs:
+      - check
       - build
 
-    if: needs.build.result == 'success'
+    if: ${{ always() && needs.build.result == 'success' }}
 
-    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        name:
+          - hdhub
+          - webstreamr-mbg
 
     steps:
-      - name: Login to GHCR
-        uses: docker/login-action@v4
+      - uses: actions/delete-package-versions@v5
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cleanup old HDHub package versions
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: hdhub
+          package-name: ${{ matrix.name }}
           package-type: container
           min-versions-to-keep: 2
           delete-only-untagged-versions: false
 
+  # ================================================================
+  # DAILY VERSION UPDATES
+  # ================================================================
   update-versions:
-    if: github.event_name == 'schedule' && github.event.schedule == '0 0 * * *'
-
     runs-on: ubuntu-latest
+    needs: check
+
+    if: >-
+      ${{ always() &&
+          (
+            github.event.schedule == '0 0 * * *' ||
+            github.event_name == 'workflow_dispatch'
+          ) }}
+
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT }}
 
-      - name: Update action versions
+      - name: Check and update versions
         run: |
-          sed -i \
-            -e 's/actions\/checkout@v[0-9]*/actions\/checkout@v4/g' \
-            -e 's/docker\/login-action@v[0-9]*/docker\/login-action@v4/g' \
-            -e 's/docker\/setup-qemu-action@v[0-9]*/docker\/setup-qemu-action@v4/g' \
-            -e 's/docker\/setup-buildx-action@v[0-9]*/docker\/setup-buildx-action@v4/g' \
-            -e 's/docker\/build-push-action@v[0-9]*/docker\/build-push-action@v7/g' \
-            -e 's/actions\/delete-package-versions@v[0-9]*/actions\/delete-package-versions@v5/g' \
-            .github/workflows/build.yml
+          WORKFLOW=".github/workflows/build.yml"
+          CHANGED=false
 
-      - name: Commit changes
+          gh_latest_major() {
+            curl -sf --retry 3 \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/$1/releases/latest" \
+              | jq -r '.tag_name // empty' \
+              | grep -oP '^v[0-9]+' \
+              > "/tmp/ver_$(echo "$1" | tr '/' '_')"
+          }
+
+          gh_latest_major "actions/checkout" &
+          gh_latest_major "actions/delete-package-versions" &
+          gh_latest_major "docker/login-action" &
+          gh_latest_major "docker/setup-qemu-action" &
+          gh_latest_major "docker/setup-buildx-action" &
+          gh_latest_major "docker/build-push-action" &
+
+          curl -sf --retry 3 \
+            https://nodejs.org/dist/index.json \
+            | jq -r '
+                [
+                  .[]
+                  | select(.lts != false and .lts != null)
+                ]
+                | sort_by(.date)
+                | reverse
+                | .[0].version
+                | ltrimstr("v")
+                | split(".")
+                | .[0]
+              ' \
+            > /tmp/ver_node &
+
+          wait
+
+          update_action() {
+            local ACTION="$1"
+            local REPO="$2"
+            local LATEST
+            local CURRENT
+
+            LATEST=$(
+              cat "/tmp/ver_$(echo "$REPO" | tr '/' '_')" \
+                2>/dev/null
+            )
+
+            if [ -z "$LATEST" ]; then
+              echo "[skip] $ACTION"
+              return
+            fi
+
+            CURRENT=$(
+              grep -oP \
+                "(?<=$(echo "$ACTION" | sed 's|/|\\/|g')@)v[0-9]+" \
+                "$WORKFLOW" \
+                | sort -V \
+                | tail -1
+            )
+
+            if [ -z "$CURRENT" ]; then
+              echo "[skip] $ACTION not found"
+              return
+            fi
+
+            if [ "$CURRENT" = "$LATEST" ]; then
+              echo "[ok] $ACTION @ $CURRENT"
+            else
+              echo "[bump] $ACTION $CURRENT -> $LATEST"
+
+              sed -i \
+                "s|${ACTION}@${CURRENT}|${ACTION}@${LATEST}|g" \
+                "$WORKFLOW"
+
+              CHANGED=true
+            fi
+          }
+
+          update_node() {
+            local LATEST
+            local CURRENT
+
+            LATEST=$(cat /tmp/ver_node 2>/dev/null)
+
+            if [ -z "$LATEST" ]; then
+              echo "[skip] Node LTS"
+              return
+            fi
+
+            CURRENT=$(
+              grep -oP \
+                'node:\K[0-9]+(?=-alpine)' \
+                "$WORKFLOW" \
+                | sort -rn \
+                | head -1
+            )
+
+            if [ -z "$CURRENT" ]; then
+              echo "[skip] Node image not found"
+              return
+            fi
+
+            if [ "$CURRENT" = "$LATEST" ]; then
+              echo "[ok] node:${CURRENT}-alpine"
+            else
+              echo "[bump] node:${CURRENT}-alpine -> node:${LATEST}-alpine"
+
+              sed -i \
+                "s|node:${CURRENT}-alpine|node:${LATEST}-alpine|g" \
+                "$WORKFLOW"
+
+              CHANGED=true
+            fi
+          }
+
+          echo "=== GitHub Actions ==="
+
+          update_action \
+            "actions/checkout" \
+            "actions/checkout"
+
+          update_action \
+            "actions/delete-package-versions" \
+            "actions/delete-package-versions"
+
+          update_action \
+            "docker/login-action" \
+            "docker/login-action"
+
+          update_action \
+            "docker/setup-qemu-action" \
+            "docker/setup-qemu-action"
+
+          update_action \
+            "docker/setup-buildx-action" \
+            "docker/setup-buildx-action"
+
+          update_action \
+            "docker/build-push-action" \
+            "docker/build-push-action"
+
+          echo "=== Node.js ==="
+
+          update_node
+
+          echo "CHANGED=$CHANGED" >> "$GITHUB_ENV"
+
+      - name: Commit version updates
+        if: ${{ env.CHANGED == 'true' }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
 
           git add .github/workflows/build.yml
 
-          if git diff --cached --quiet; then
-            echo "No workflow changes."
-            exit 0
-          fi
+          git commit \
+            -m "chore: update action and image versions [skip ci]"
 
-          git commit -m "Update workflow versions"
-          git push
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin "${{ github.ref_name }}" && \
+            git push origin "${{ github.ref_name }}" && break
+
+            echo "Push attempt $i failed, retrying..."
+            sleep $((RANDOM % 5 + 1))
+          done
