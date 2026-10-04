@@ -11,8 +11,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
   packages: write
+  contents: write
 
 jobs:
   check:
@@ -20,8 +20,6 @@ jobs:
 
     outputs:
       hdhub_sha: ${{ steps.hdhub.outputs.sha }}
-      webstreamr_mbg_sha: ${{ steps.webstreamr_mbg.outputs.sha }}
-      yastream_sha: ${{ steps.yastream.outputs.sha }}
 
     steps:
       - name: Checkout
@@ -33,20 +31,6 @@ jobs:
           SHA=$(git ls-remote https://github.com/TheVolecitor/hdhub.git refs/heads/main | cut -f1)
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "HDHub SHA: $SHA"
-
-      - name: Get WebStreamrMBG SHA
-        id: webstreamr_mbg
-        run: |
-          SHA=$(git ls-remote https://github.com/newman2x/WebStreamrMBG.git refs/heads/main | cut -f1)
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "WebStreamrMBG SHA: $SHA"
-
-      - name: Get YaStream dev SHA
-        id: yastream
-        run: |
-          SHA=$(git ls-remote https://github.com/hoangtamthai/yastream.git refs/heads/dev | cut -f1)
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "YaStream dev SHA: $SHA"
 
   process_repo:
     needs: check
@@ -72,8 +56,6 @@ jobs:
         id: matrix
         env:
           HDHUB_SHA: ${{ needs.check.outputs.hdhub_sha }}
-          WEBSTREAMR_MBG_SHA: ${{ needs.check.outputs.webstreamr_mbg_sha }}
-          YASTREAM_SHA: ${{ needs.check.outputs.yastream_sha }}
         run: |
           python3 <<'PY'
           import json
@@ -94,30 +76,16 @@ jobs:
 
           current = {
               "hdhub": os.environ["HDHUB_SHA"],
-              "webstreamr-mbg": os.environ["WEBSTREAMR_MBG_SHA"],
-              "yastream": os.environ["YASTREAM_SHA"],
           }
 
           repos = {
               "hdhub": {
                   "sha_key": "hdhub",
                   "repository": "TheVolecitor/hdhub",
-                  "branch": "main",
-                  "tag": "latest",
-              },
-
-              "webstreamr-mbg": {
-                  "sha_key": "webstreamr-mbg",
-                  "repository": "newman2x/WebStreamrMBG",
-                  "branch": "main",
-                  "tag": "latest",
-              },
-
-              "yastream": {
-                  "sha_key": "yastream",
-                  "repository": "hoangtamthai/yastream",
-                  "branch": "dev",
-                  "tag": "dev",
+                  "context": ".",
+                  "dockerfile": "Dockerfile",
+                  "platforms": "linux/arm64",
+                  "private": "false",
               },
           }
 
@@ -130,10 +98,11 @@ jobs:
                   matrix.append({
                       "name": name,
                       "repository": repo["repository"],
-                      "branch": repo["branch"],
                       "sha": sha,
-                      "tag": repo["tag"],
-                      "platforms": "linux/arm64"
+                      "private": repo["private"],
+                      "context": repo["context"],
+                      "dockerfile": repo["dockerfile"],
+                      "platforms": repo["platforms"],
                   })
 
           output = {
@@ -167,32 +136,6 @@ jobs:
           ref: ${{ matrix.sha }}
           fetch-depth: 1
 
-      - name: Patch YaStream TMDB endpoint
-        if: matrix.name == 'yastream'
-        run: |
-          echo "Patching YaStream TMDB endpoint..."
-
-          grep -RIl \
-            --exclude-dir=.git \
-            'https://api.tmdb.org/3' \
-            . \
-            | xargs -r sed -i \
-              's#https://api\.tmdb\.org/3#https://api.themoviedb.org/3#g'
-
-          echo
-          echo "Checking for remaining api.tmdb.org references:"
-          grep -RIn \
-            --exclude-dir=.git \
-            'api.tmdb.org' \
-            . || true
-
-          echo
-          echo "TMDB references after patch:"
-          grep -RIn \
-            --exclude-dir=.git \
-            'api.themoviedb.org' \
-            src 2>/dev/null || true
-
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v4
         with:
@@ -217,7 +160,7 @@ jobs:
           WORKDIR /app
 
           COPY package*.json ./
-          RUN npm install --omit=dev
+          RUN npm ci --omit=dev
 
           COPY . .
 
@@ -226,52 +169,16 @@ jobs:
           CMD ["node", "server.js"]
           EOF
 
-      - name: Prepare WebStreamrMBG Dockerfile
-        if: matrix.name == 'webstreamr-mbg'
-        run: |
-          cat > Dockerfile.custom <<'EOF'
-          FROM node:22-alpine AS builder
-
-          WORKDIR /app
-
-          COPY package*.json ./
-          RUN npm install
-
-          COPY . .
-
-          RUN npm run build
-          RUN npm prune --omit=dev
-
-          FROM node:22-alpine
-
-          WORKDIR /app
-
-          COPY --from=builder /app/package*.json ./
-          COPY --from=builder /app/node_modules ./node_modules
-          COPY --from=builder /app/dist ./dist
-
-          EXPOSE 51546
-
-          CMD ["node", "dist/index.js"]
-          EOF
-
-      - name: Prepare YaStream Dockerfile
-        if: matrix.name == 'yastream'
-        run: |
-          cp Dockerfile Dockerfile.custom
-
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: Dockerfile.custom
           platforms: ${{ matrix.platforms }}
           push: true
-
           tags: |
-            ghcr.io/jjfiecas-stack/${{ matrix.name }}:${{ matrix.tag }}
+            ghcr.io/jjfiecas-stack/${{ matrix.name }}:latest
             ghcr.io/jjfiecas-stack/${{ matrix.name }}:${{ matrix.sha }}
-
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
@@ -293,8 +200,6 @@ jobs:
         run: |
           cat > .last_shas <<EOF
           hdhub=${{ needs.check.outputs.hdhub_sha }}
-          webstreamr-mbg=${{ needs.check.outputs.webstreamr_mbg_sha }}
-          yastream=${{ needs.check.outputs.yastream_sha }}
           EOF
 
       - name: Commit SHA changes
@@ -309,7 +214,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Update image SHAs"
+          git commit -m "Update HDHub SHA"
           git push
 
   cleanup:
@@ -320,13 +225,6 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        package:
-          - hdhub
-          - webstreamr-mbg
-          - yastream
-
     steps:
       - name: Login to GHCR
         uses: docker/login-action@v4
@@ -335,10 +233,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cleanup old package versions
+      - name: Cleanup old HDHub package versions
         uses: actions/delete-package-versions@v5
         with:
-          package-name: ${{ matrix.package }}
+          package-name: hdhub
           package-type: container
           min-versions-to-keep: 2
           delete-only-untagged-versions: false
