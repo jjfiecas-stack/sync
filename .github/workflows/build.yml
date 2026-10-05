@@ -1,3 +1,4 @@
+```yaml
 name: Build images
 
 on:
@@ -11,22 +12,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+
+  # ============================================================
+  # HDHUB
+  # ============================================================
+  build-hdhub:
     if: github.event.schedule != '0 0 * * *'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       packages: write
+
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check upstream
+      - name: Check upstream HDHub
         id: check
         env:
           GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          sha=$(gh api repos/TheVolecitor/hdhub/commits/main --jq .sha) || { echo "::warning::fetch failed"; exit 0; }
-          grep -qx "hdhub=$sha" .last_shas 2>/dev/null || echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          sha=$(gh api repos/TheVolecitor/hdhub/commits/main --jq .sha) || {
+            echo "::warning::Failed to fetch HDHub SHA"
+            exit 0
+          }
+
+          if ! grep -qx "hdhub=$sha" .last_shas 2>/dev/null; then
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          fi
 
       - if: steps.check.outputs.sha
         uses: actions/checkout@v7
@@ -41,12 +53,19 @@ jobs:
         run: |
           cat > _source/Dockerfile << 'DOCKERFILE'
           FROM node:24-alpine
+
           WORKDIR /app
+
           COPY package*.json ./
+
           RUN npm ci --omit=dev --no-audit --no-fund
+
           COPY . .
+
           RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js
+
           EXPOSE 7000
+
           CMD ["node", "server.js"]
           DOCKERFILE
 
@@ -78,16 +97,23 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Commit SHA
+      - name: Commit HDHub SHA
         if: steps.check.outputs.sha
         run: |
-          echo "hdhub=${{ steps.check.outputs.sha }}" > .last_shas
+          grep -v '^hdhub=' .last_shas 2>/dev/null > .last_shas.tmp || true
+          echo "hdhub=${{ steps.check.outputs.sha }}" >> .last_shas.tmp
+          mv .last_shas.tmp .last_shas
+
           git config user.name github-actions
           git config user.email github-actions@github.com
+
           git add .last_shas
-          git commit -qm "chore: update last SHAs [skip ci]"
+          git commit -qm "chore: update HDHub SHA [skip ci]"
+
           for i in 1 2 3 4 5; do
-            git pull -q --rebase origin "$GITHUB_REF_NAME" && git push origin "$GITHUB_REF_NAME" && break
+            git pull -q --rebase origin "$GITHUB_REF_NAME" &&
+            git push origin "$GITHUB_REF_NAME" &&
+            break
             sleep $((RANDOM % 5 + 1))
           done
 
@@ -98,11 +124,129 @@ jobs:
           package-type: container
           min-versions-to-keep: 2
 
+
+  # ============================================================
+  # CLOUDFLARE WARP
+  # ============================================================
+  build-warp:
+    if: github.event.schedule != '0 0 * * *'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout WARP Docker
+        uses: actions/checkout@v7
+        with:
+          repository: cmj2002/warp-docker
+          ref: main
+          path: _warp
+
+      - name: Get latest GOST version
+        id: gost
+        run: |
+          version=$(curl -fsSL \
+            https://api.github.com/repos/ginuerzh/gost/releases/latest \
+            | jq -r '.tag_name' \
+            | sed 's/^v//')
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid GOST version: $version"
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Get latest WARP version
+        id: warp
+        run: |
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
+            | sudo gpg --yes --dearmor \
+              --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+
+          sudo apt-get update -qq
+
+          version=$(
+            apt-cache show cloudflare-warp \
+            | grep '^Version:' \
+            | head -1 \
+            | awk '{print $2}' \
+            | sed 's/-[0-9]*$//'
+          )
+
+          if [ -z "$version" ]; then
+            echo "Failed to determine WARP version"
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Patch WARP logging
+        run: |
+          echo "GOST version: ${{ steps.gost.outputs.version }}"
+          echo "WARP version: ${{ steps.warp.outputs.version }}"
+
+          # GOST uses GOST_LOGGER_LEVEL, not LOG_LEVEL.
+          # This suppresses info/debug/trace output and keeps warnings/errors.
+          sed -i '/^ENV GOST_ARGS=/a ENV GOST_LOGGER_LEVEL=warn' _warp/Dockerfile
+
+          echo
+          echo "Patched Dockerfile:"
+          grep -E 'GOST_ARGS|GOST_LOGGER_LEVEL' _warp/Dockerfile
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push WARP
+        uses: docker/build-push-action@v7
+        with:
+          context: _warp
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            GOST_VERSION=${{ steps.gost.outputs.version }}
+            WARP_VERSION=${{ steps.warp.outputs.version }}
+            COMMIT_SHA=${{ github.sha }}
+          tags: |
+            ghcr.io/jjfiecas-stack/warp:latest
+            ghcr.io/jjfiecas-stack/warp:${{ steps.warp.outputs.version }}-${{ steps.gost.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Delete old WARP package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: warp
+          package-type: container
+          min-versions-to-keep: 2
+
+
+  # ============================================================
+  # UPDATE ACTION / NODE VERSIONS
+  # ============================================================
   update-versions:
     if: github.event.schedule == '0 0 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+
     steps:
       - uses: actions/checkout@v7
         with:
@@ -117,18 +261,28 @@ jobs:
           for a in actions/checkout actions/delete-package-versions docker/login-action \
                    docker/setup-qemu-action docker/setup-buildx-action docker/build-push-action; do
             v=$(gh api "repos/$a/releases/latest" --jq .tag_name | grep -oP '^v[0-9]+') || continue
-            sed -i -E "s|($a@)v[0-9]+|\1$v|g" $F
+            sed -i -E "s|($a@)v[0-9]+|\1$v|g" "$F"
           done
 
-          n=$(curl -sf --retry 3 https://nodejs.org/dist/index.json \
-            | jq -r '[.[] | select(.lts)] | .[0].version | ltrimstr("v") | split(".")[0]')
-          [ -n "$n" ] && sed -i -E "s|node:[0-9]+-alpine|node:$n-alpine|g" $F
+          n=$(
+            curl -sf --retry 3 https://nodejs.org/dist/index.json \
+            | jq -r '[.[] | select(.lts)] | .[0].version | ltrimstr("v") | split(".")[0]'
+          )
+
+          [ -n "$n" ] &&
+            sed -i -E "s|node:[0-9]+-alpine|node:$n-alpine|g" "$F"
 
           git diff --quiet && exit 0
+
           git config user.name github-actions
           git config user.email github-actions@github.com
+
           git commit -qam "chore: update action and image versions [skip ci]"
+
           for i in 1 2 3 4 5; do
-            git pull -q --rebase origin "$GITHUB_REF_NAME" && git push origin "$GITHUB_REF_NAME" && break
+            git pull -q --rebase origin "$GITHUB_REF_NAME" &&
+            git push origin "$GITHUB_REF_NAME" &&
+            break
             sleep $((RANDOM % 5 + 1))
           done
+```
