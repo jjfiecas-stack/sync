@@ -1,4 +1,3 @@
-```yaml
 name: Build images
 
 on:
@@ -285,4 +284,3 @@ jobs:
             break
             sleep $((RANDOM % 5 + 1))
           done
-```
