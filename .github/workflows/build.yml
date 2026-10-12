@@ -13,7 +13,8 @@ concurrency:
 jobs:
   build:
     if: github.event.schedule != '0 0 * * *'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     permissions:
       contents: write
       packages: write
@@ -40,10 +41,13 @@ jobs:
           ref: ${{ steps.check.outputs.sha }}
           token: ${{ secrets.PAT }}
           path: _source
+          persist-credentials: false
 
       - name: Write Dockerfile
         if: steps.check.outputs.sha
         run: |
+          rm -rf _source/.git
+
           cat > _source/Dockerfile << 'DOCKERFILE'
           FROM node:24-alpine
 
@@ -68,11 +72,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - if: steps.check.outputs.sha
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
 
       - if: steps.check.outputs.sha
         uses: docker/setup-buildx-action@v4
@@ -118,6 +117,7 @@ jobs:
   update-versions:
     if: github.event.schedule == '0 0 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
 
@@ -126,7 +126,7 @@ jobs:
         with:
           token: ${{ secrets.PAT }}
 
-      - name: Update action and image versions
+      - name: Update action versions
         env:
           GH_TOKEN: ${{ secrets.PAT }}
         run: |
@@ -136,7 +136,6 @@ jobs:
             actions/checkout \
             actions/delete-package-versions \
             docker/login-action \
-            docker/setup-qemu-action \
             docker/setup-buildx-action \
             docker/build-push-action
           do
@@ -144,17 +143,12 @@ jobs:
             sed -i -E "s|($a@)v[0-9]+|\1$v|g" "$F"
           done
 
-          n=$(curl -sf --retry 3 https://nodejs.org/dist/index.json \
-            | jq -r '[.[] | select(.lts)] | .[0].version | ltrimstr("v") | split(".")[0]')
-
-          [ -n "$n" ] && sed -i -E "s|node:[0-9]+-alpine|node:$n-alpine|g" "$F"
-
           git diff --quiet && exit 0
 
           git config user.name github-actions
           git config user.email github-actions@github.com
 
-          git commit -qam "chore: update action and image versions [skip ci]"
+          git commit -qam "chore: update action versions [skip ci]"
 
           for i in 1 2 3 4 5; do
             git pull -q --rebase origin "$GITHUB_REF_NAME" &&
