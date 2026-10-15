@@ -92,7 +92,8 @@ jobs:
       - name: Commit SHA
         if: steps.check.outputs.sha
         run: |
-          echo "hdhub=${{ steps.check.outputs.sha }}" > .last_shas
+          sed -i '/^hdhub=/d' .last_shas 2>/dev/null || true
+          echo "hdhub=${{ steps.check.outputs.sha }}" >> .last_shas
 
           git config user.name github-actions
           git config user.email github-actions@github.com
@@ -111,6 +112,107 @@ jobs:
         uses: actions/delete-package-versions@v5
         with:
           package-name: hdhub
+          package-type: container
+          min-versions-to-keep: 2
+
+  build-magnetio:
+    if: github.event.schedule != '0 0 * * *'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check upstream
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          sha=$(gh api repos/peterdsp/Magnetio/commits/main --jq .sha) || {
+            echo "::warning::fetch failed"
+            exit 0
+          }
+
+          grep -qx "magnetio=$sha" .last_shas 2>/dev/null || echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - if: steps.check.outputs.sha
+        uses: actions/checkout@v7
+        with:
+          repository: peterdsp/Magnetio
+          ref: ${{ steps.check.outputs.sha }}
+          token: ${{ secrets.PAT }}
+          path: _source-magnetio
+          persist-credentials: false
+
+      - if: steps.check.outputs.sha
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - if: steps.check.outputs.sha
+        uses: docker/setup-buildx-action@v4
+
+      - if: steps.check.outputs.sha
+        uses: docker/build-push-action@v7
+        with:
+          context: _source-magnetio/scraper
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/jjfiecas-stack/magnetio-scraper:latest
+            ghcr.io/jjfiecas-stack/magnetio-scraper:${{ steps.check.outputs.sha }}
+          cache-from: type=gha,scope=magnetio-scraper
+          cache-to: type=gha,mode=max,scope=magnetio-scraper
+
+      - if: steps.check.outputs.sha
+        uses: docker/build-push-action@v7
+        with:
+          context: _source-magnetio/addon
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/jjfiecas-stack/magnetio-addon:latest
+            ghcr.io/jjfiecas-stack/magnetio-addon:${{ steps.check.outputs.sha }}
+          cache-from: type=gha,scope=magnetio-addon
+          cache-to: type=gha,mode=max,scope=magnetio-addon
+
+      - name: Commit SHA
+        if: steps.check.outputs.sha
+        run: |
+          sed -i '/^magnetio=/d' .last_shas 2>/dev/null || true
+          echo "magnetio=${{ steps.check.outputs.sha }}" >> .last_shas
+
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
+          git add .last_shas
+          git commit -qm "chore: update last SHAs [skip ci]"
+
+          for i in 1 2 3 4 5; do
+            git pull -q --rebase origin "$GITHUB_REF_NAME" &&
+            git push origin "$GITHUB_REF_NAME" &&
+            break
+            sleep $((RANDOM % 5 + 1))
+          done
+
+      - if: steps.check.outputs.sha
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: magnetio-scraper
+          package-type: container
+          min-versions-to-keep: 2
+
+      - if: steps.check.outputs.sha
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: magnetio-addon
           package-type: container
           min-versions-to-keep: 2
 
