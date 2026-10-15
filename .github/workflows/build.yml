@@ -147,11 +147,6 @@ jobs:
           path: _source-magnetio
           persist-credentials: false
 
-      - name: Patch scraper (unique-only providers)
-        if: steps.check.outputs.sha
-        run: |
-          printf '\n# Unique-only: disable everything Torrentio/MediaFusion/Bitmagnet already cover\nENV SCRAPER_DISABLED_PROVIDERS=yts,eztv,thepiratebay,torrentgalaxy,1337x,kickasstorrents,nyaa,animesaturn,rutor,rutracker,subsplease,animetosho,nekobt,torznab\n' >> _source-magnetio/scraper/Dockerfile
-
       - if: steps.check.outputs.sha
         uses: docker/login-action@v4
         with:
