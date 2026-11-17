@@ -149,7 +149,7 @@ jobs:
           ./gradlew --no-daemon :desktopApp:createDistributable
           APP_DIR=$(find desktopApp/build/compose/binaries -type d -path '*/app/*' | head -1)
           test -n "$APP_DIR" || { echo "::error::distributable not found"; exit 1; }
-          cp -r "$APP_DIR" "$GITHUB_WORKSPACE/_app"
+          cp -r "$APP_DIR" _app
 
       - name: Write Dockerfile
         run: |
