@@ -206,6 +206,85 @@ jobs:
           package-type: container
           min-versions-to-keep: 2
 
+  # One-shot: upstream v1.0.1 still had the web configure UI (removed in v1.1.0).
+  cncweb:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: NivinCNC/CNCVerse-Bridge
+          ref: 9060c0fd3a23ce59e3c6eddc68e3a43552a2bc1d
+          token: ${{ secrets.PAT }}
+          path: _source
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v4.0.4
+
+      - name: Build distributable
+        working-directory: _source
+        run: |
+          ./gradlew --no-daemon :desktopApp:createDistributable
+          APP_DIR=$(find desktopApp/build/compose/binaries -type d -path '*/app/*' | head -1)
+          test -n "$APP_DIR" || { echo "::error::distributable not found"; exit 1; }
+          cp -r "$APP_DIR" _app
+
+      - name: Write Dockerfile
+        run: |
+          rm -rf _source/.git
+          printf '%s\n' '*' '!Dockerfile' '!_app' '!_app/**' > _source/.dockerignore
+          cat > _source/Dockerfile << 'DOCKERFILE'
+          FROM ubuntu:24.04
+          RUN apt-get update \
+              && apt-get install -y --no-install-recommends \
+                 xvfb xauth ca-certificates fontconfig fonts-dejavu-core fonts-liberation libgtk-3-0 \
+                 libx11-6 libxtst6 libxrender1 libxi6 libfontconfig1 libfreetype6 \
+              && rm -rf /var/lib/apt/lists/*
+          COPY _app/ /opt/cncverse/
+          RUN BIN=$(find /opt/cncverse/bin -maxdepth 1 -type f -perm -u+x | head -1) \
+              && test -n "$BIN" \
+              && printf '#!/bin/sh\nexport DISPLAY=:99\nrm -f /tmp/.X99-lock /tmp/.X11-unix/X99\nXvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &\nsleep 2\nexec "%s" "$@"\n' "$BIN" > /usr/local/bin/cncverse \
+              && chmod +x /usr/local/bin/cncverse \
+              && mkdir -p /data/config /data/cache
+          ENV CNC_AUTOSTART=1 \
+              CNC_LOG_STDOUT=1 \
+              CNC_CONFIG_DIR=/data/config \
+              CNC_CACHE_DIR=/data/cache \
+              CNC_STREAM_BASE_URL=https://cnc.88221561.xyz
+          EXPOSE 8080
+          ENTRYPOINT ["cncverse"]
+          DOCKERFILE
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: _source
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/jjfiecas-stack/cncverse-web:latest
+            ghcr.io/jjfiecas-stack/cncverse-web:v1.0.1
+          cache-from: type=gha,scope=cncverse-web
+          cache-to: type=gha,mode=max,scope=cncverse-web
+
   # One commit for everything that built, so the builds can't race on .last_shas.
   record:
     needs: [check, magnetio, cncverse]
