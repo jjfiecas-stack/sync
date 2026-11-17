@@ -160,12 +160,13 @@ jobs:
           RUN apt-get update \
               && apt-get install -y --no-install-recommends \
                  xvfb xauth ca-certificates fontconfig fonts-dejavu-core fonts-liberation libgtk-3-0 \
+                 x11vnc novnc websockify \
                  libx11-6 libxtst6 libxrender1 libxi6 libfontconfig1 libfreetype6 \
               && rm -rf /var/lib/apt/lists/*
           COPY _app/ /opt/cncverse/
           RUN BIN=$(find /opt/cncverse/bin -maxdepth 1 -type f -perm -u+x | head -1) \
               && test -n "$BIN" \
-              && printf '#!/bin/sh\nexport DISPLAY=:99\nrm -f /tmp/.X99-lock /tmp/.X11-unix/X99\nXvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &\nexec "%s" "$@"\n' "$BIN" > /usr/local/bin/cncverse \
+              && printf '#!/bin/sh\nexport DISPLAY=:99\nrm -f /tmp/.X99-lock /tmp/.X11-unix/X99\nXvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &\nsleep 2\nx11vnc -display :99 -forever -shared -rfbport 5900 -nopw -listen 0.0.0.0 -xkb >/tmp/x11vnc.log 2>&1 &\nwebsockify --web /usr/share/novnc 6080 127.0.0.1:5900 >/tmp/websockify.log 2>&1 &\nexec "%s" "$@"\n' "$BIN" > /usr/local/bin/cncverse \
               && chmod +x /usr/local/bin/cncverse \
               && mkdir -p /data/config /data/cache
           ENV CNC_AUTOSTART=1 \
