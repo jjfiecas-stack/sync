@@ -21,8 +21,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      hdhub: ${{ steps.check.outputs.hdhub }}
       magnetio: ${{ steps.check.outputs.magnetio }}
+      cncverse: ${{ steps.check.outputs.cncverse }}
 
     steps:
       - uses: actions/checkout@v7
@@ -35,86 +35,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          for pair in hdhub=TheVolecitor/hdhub magnetio=peterdsp/Magnetio; do
+          for pair in magnetio=peterdsp/Magnetio cncverse=@NivinCNC/CNCVerse-Bridge; do
             key=${pair%%=*}
             repo=${pair#*=}
 
-            sha=$(gh api "repos/$repo/commits/main" --jq .sha) || {
-              echo "::warning::$key fetch failed"
-              continue
-            }
+            if [[ $repo == @* ]]; then
+              sha=$(gh api "repos/${repo#@}/releases/latest" --jq .tag_name) || {
+                echo "::warning::$key fetch failed"
+                continue
+              }
+            else
+              sha=$(gh api "repos/$repo/commits/main" --jq .sha) || {
+                echo "::warning::$key fetch failed"
+                continue
+              }
+            fi
 
             grep -qx "$key=$sha" .last_shas 2>/dev/null || echo "$key=$sha" >> "$GITHUB_OUTPUT"
           done
-
-  hdhub:
-    needs: check
-    if: needs.check.outputs.hdhub != ''
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          repository: TheVolecitor/hdhub
-          ref: ${{ needs.check.outputs.hdhub }}
-          token: ${{ secrets.PAT }}
-          path: _source
-          persist-credentials: false
-
-      - name: Write Dockerfile
-        run: |
-          rm -rf _source/.git
-
-          cat > _source/Dockerfile << 'DOCKERFILE'
-          FROM node:24-alpine
-
-          WORKDIR /app
-
-          COPY package*.json ./
-
-          RUN --mount=type=cache,target=/root/.npm \
-              npm ci --omit=dev --no-audit --no-fund
-
-          COPY . .
-
-          RUN sed -i 's/127\.0\.0\.1/0.0.0.0/g' server.js
-
-          EXPOSE 7000
-
-          CMD ["node", "server.js"]
-          DOCKERFILE
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/build-push-action@v7
-        with:
-          context: _source
-          platforms: linux/arm64
-          push: true
-          provenance: false
-          tags: |
-            ghcr.io/jjfiecas-stack/hdhub:latest
-            ghcr.io/jjfiecas-stack/hdhub:${{ needs.check.outputs.hdhub }}
-          cache-from: type=gha,scope=hdhub
-          cache-to: type=gha,mode=max,scope=hdhub
-
-      # A failed prune must never block recording the SHA, or it rebuilds every hour.
-      - uses: actions/delete-package-versions@v5
-        continue-on-error: true
-        with:
-          package-name: hdhub
-          package-type: container
-          min-versions-to-keep: 2
 
   magnetio:
     needs: check
@@ -180,10 +118,97 @@ jobs:
           package-type: container
           min-versions-to-keep: 2
 
-  # One commit for everything that built, so the two builds can't race on .last_shas.
+  cncverse:
+    needs: check
+    if: needs.check.outputs.cncverse != ''
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: NivinCNC/CNCVerse-Bridge
+          ref: ${{ needs.check.outputs.cncverse }}
+          token: ${{ secrets.PAT }}
+          path: _source
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build distributable
+        working-directory: _source
+        run: |
+          ./gradlew --no-daemon :desktopApp:createDistributable
+          APP_DIR=$(find desktopApp/build/compose/binaries -type d -path '*/app/*' | head -1)
+          test -n "$APP_DIR" || { echo "::error::distributable not found"; exit 1; }
+          cp -r "$APP_DIR" "$GITHUB_WORKSPACE/_app"
+
+      - name: Write Dockerfile
+        run: |
+          rm -rf _source/.git
+          printf '%s\n' '*' '!Dockerfile' '!_app' '!_app/**' > _source/.dockerignore
+          cat > _source/Dockerfile << 'DOCKERFILE'
+          FROM ubuntu:24.04
+          RUN apt-get update \
+              && apt-get install -y --no-install-recommends \
+                 xvfb xauth ca-certificates fonts-liberation libgtk-3-0 \
+                 libx11-6 libxtst6 libxrender1 libxi6 libfontconfig1 libfreetype6 \
+              && rm -rf /var/lib/apt/lists/*
+          COPY _app/ /opt/cncverse/
+          RUN BIN=$(find /opt/cncverse/bin -maxdepth 1 -type f -perm -u+x | head -1) \
+              && test -n "$BIN" \
+              && printf '#!/bin/sh\nexec /usr/bin/xvfb-run -a -s "-screen 0 1280x800x24" "%s" "$@"\n' "$BIN" > /usr/local/bin/cncverse \
+              && chmod +x /usr/local/bin/cncverse \
+              && mkdir -p /data/config /data/cache
+          ENV CNC_AUTOSTART=1 \
+              CNC_LOG_STDOUT=1 \
+              CNC_CONFIG_DIR=/data/config \
+              CNC_CACHE_DIR=/data/cache \
+              CNC_STREAM_BASE_URL=https://cnc.88221561.xyz
+          EXPOSE 8080
+          ENTRYPOINT ["cncverse"]
+          DOCKERFILE
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: _source
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/jjfiecas-stack/cncverse-bridge:latest
+            ghcr.io/jjfiecas-stack/cncverse-bridge:${{ needs.check.outputs.cncverse }}
+          cache-from: type=gha,scope=cncverse-bridge
+          cache-to: type=gha,mode=max,scope=cncverse-bridge
+
+      # A failed prune must never block recording the tag, or it rebuilds every hour.
+      - uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          package-name: cncverse-bridge
+          package-type: container
+          min-versions-to-keep: 2
+
+  # One commit for everything that built, so the builds can't race on .last_shas.
   record:
-    needs: [check, hdhub, magnetio]
-    if: ${{ !cancelled() && (needs.hdhub.result == 'success' || needs.magnetio.result == 'success') }}
+    needs: [check, magnetio, cncverse]
+    if: ${{ !cancelled() && (needs.magnetio.result == 'success' || needs.cncverse.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -194,10 +219,10 @@ jobs:
 
       - name: Commit SHAs
         env:
-          HDHUB_RESULT: ${{ needs.hdhub.result }}
-          HDHUB_SHA: ${{ needs.check.outputs.hdhub }}
           MAGNETIO_RESULT: ${{ needs.magnetio.result }}
           MAGNETIO_SHA: ${{ needs.check.outputs.magnetio }}
+          CNCVERSE_RESULT: ${{ needs.cncverse.result }}
+          CNCVERSE_TAG: ${{ needs.check.outputs.cncverse }}
         run: |
           touch .last_shas
 
@@ -206,8 +231,8 @@ jobs:
             echo "$1=$2" >> .last_shas
           }
 
-          if [ "$HDHUB_RESULT" = success ]; then record hdhub "$HDHUB_SHA"; fi
           if [ "$MAGNETIO_RESULT" = success ]; then record magnetio "$MAGNETIO_SHA"; fi
+          if [ "$CNCVERSE_RESULT" = success ]; then record cncverse "$CNCVERSE_TAG"; fi
 
           git add .last_shas
           git diff --cached --quiet && exit 0
