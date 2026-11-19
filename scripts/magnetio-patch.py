@@ -8,7 +8,9 @@ that returns nothing.
 
 Usage: magnetio-patch.py <path to _source/scraper>
 """
+import json
 import pathlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "_source/scraper")
@@ -294,6 +296,36 @@ sub(
 """,
     addon_root,
 )
+
+# Validated domain overrides produced by the auto-healer. Each entry has
+# already passed real parser tests, so a missing anchor fails the build loudly
+# instead of silently shipping a scraper that returns nothing.
+overrides_file = None
+for candidate in (
+    root.parent.parent / "scripts" / "domain-overrides.json",
+    root.parent / "scripts" / "domain-overrides.json",
+):
+    if candidate.exists():
+        overrides_file = candidate
+        break
+if overrides_file is not None:
+    overrides = json.loads(overrides_file.read_text())
+    domains_path = root / "lib" / "domainRotation.js"
+    domains_text = domains_path.read_text()
+    for provider_id, urls in overrides.items():
+        clean = [u for u in urls if isinstance(u, str) and u.startswith("https://")]
+        if not clean:
+            continue
+        pattern = re.compile(
+            r"((?:'" + re.escape(provider_id) + r"'|" + re.escape(provider_id) + r"):\s*\[)([^\]]*)(\])"
+        )
+        rendered = "\n".join(f"    '{u}'," for u in clean)
+        replacement = lambda m: m.group(1) + "\n" + rendered + "\n  " + m.group(3)
+        domains_text, count = pattern.subn(replacement, domains_text, count=1)
+        if count != 1:
+            sys.exit(f"domain override anchor missing for {provider_id!r}")
+    domains_path.write_text(domains_text)
+    print(f"applied domain overrides: {', '.join(sorted(overrides))}")
 
 # LimeTorrents search rows already carry the info hash; the 12 detail-page
 # fetches upstream adds blow the 15s provider budget when the site is reached
