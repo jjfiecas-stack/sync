@@ -26,6 +26,19 @@ def sub(path, old, new):
     print(f"patched: {p}")
 
 
+def rewrite(path, anchor, new):
+    """Replace a whole provider file, but only if upstream still looks known."""
+    p = root / path
+    text = p.read_text()
+    if text == new:
+        print(f"already patched: {p}")
+        return
+    if anchor not in text:
+        sys.exit(f"rewrite anchor missing in {p}: {anchor[:70]!r}")
+    p.write_text(new)
+    print(f"rewrote: {p}")
+
+
 # TorrentGalaxy mirrors now title search pages "<query> torrents in <category>";
 # the upstream check only accepted the old "<title>Search for" wording, so every
 # valid response was discarded and the provider reported "all domains exhausted".
@@ -151,4 +164,106 @@ sub(
 }
 
 function extractInfoHash(magnet) {""",
+)
+
+# TorLock's HTML search is behind Cloudflare, but its official Torznab feed is
+# open and returns 100 results with magnets and seed counts inline.
+rewrite(
+    "providers/torlock.js",
+    "TorLock provider -- scrapes torlock2.com search results via HTML.",
+    r'''/**
+ * TorLock provider -- reads the official Torznab feed instead of the HTML site.
+ * The site hides every search behind a Cloudflare challenge, but /torznab/api
+ * serves the same index as XML, with magnet links and seed counts inline.
+ */
+import { get } from '../lib/httpClient.js';
+import { parseTitle, buildSearchQuery } from '../lib/titleHelper.js';
+import { logger } from '../lib/logger.js';
+
+const API = 'https://www.torlock.com/torznab/api';
+const MAX_RESULTS = 30;
+
+export const id   = 'torlock';
+export const name = 'TorLock';
+// Content types this provider can answer for.
+export const types = ['movie', 'series', 'anime'];
+
+export async function scrape(meta) {
+  if (!meta?.name) return [];
+
+  try {
+    const query = buildSearchQuery(meta);
+    const { data } = await get(API, {
+      limiterKey: 'torlock',
+      params: { t: 'search', q: query },
+    });
+
+    const items = String(data).match(/<item>[\s\S]*?<\/item>/g) ?? [];
+    const results = [];
+
+    for (const item of items) {
+      const title = decode((item.match(/<title>([\s\S]*?)<\/title>/) ?? [])[1] ?? '');
+      const link  = decode((item.match(/<link>([\s\S]*?)<\/link>/) ?? [])[1] ?? '');
+      const infoHash = extractInfoHash(link);
+      if (!title || !infoHash) continue;
+
+      const size = parseInt((item.match(/<size>(\d+)<\/size>/) ?? [])[1] ?? '0', 10) || 0;
+      const attr = (name) =>
+        parseInt((item.match(new RegExp(`name="${name}"\\s+value="(\\d+)"`)) ?? [])[1] ?? '0', 10) || 0;
+
+      results.push({
+        infoHash,
+        title,
+        seeders:  attr('seeders'),
+        leechers: attr('leechers'),
+        size,
+        provider: 'TorLock',
+        imdbId:   meta.imdbId,
+        ...parseTitle(title),
+      });
+      if (results.length >= MAX_RESULTS) break;
+    }
+
+    return results;
+  } catch (err) {
+    logger.warn(`[TorLock] ${err.message}`);
+    return [];
+  }
+}
+
+function decode(s) {
+  return s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+}
+
+function extractInfoHash(magnet) {
+  const match = magnet.match(/xt=urn:btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
+  return match ? match[1].toLowerCase() : null;
+}
+''',
+)
+
+# LimeTorrents search rows already carry the info hash; the 12 detail-page
+# fetches upstream adds blow the 15s provider budget when the site is reached
+# through WARP. Use the hash from the row and skip the detail round-trip.
+sub(
+    "providers/limetorrents.js",
+    """    const settled = await Promise.allSettled(
+      rows.slice(0, 12).map(row => fetchDetail(row, meta))
+    );
+
+    return settled.flatMap(result =>
+      result.status === 'fulfilled' && result.value ? [result.value] : []
+    );
+""",
+    """    return rows.slice(0, 20).map(row => ({
+      infoHash: row.infoHash,
+      title: row.title,
+      seeders: row.seeders,
+      leechers: row.leechers,
+      size: row.size,
+      provider: 'LimeTorrents',
+      imdbId: meta.imdbId,
+      ...parseTitle(row.title),
+    }));
+""",
 )
