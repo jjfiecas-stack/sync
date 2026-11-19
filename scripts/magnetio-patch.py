@@ -277,6 +277,23 @@ sub(
     "async function _waitForReady(torrentId, apiKey, retries = 8, delayMs = 250)",
     addon_root,
 )
+# An empty result is not a transient fetch failure. Retrying it after 1s
+# doubles the cold response time (3s scraper + 1s + 3s scraper) and breaks the
+# 6.5s addon budget, so take the first answer as final.
+sub(
+    "lib/repository.js",
+    """      const results = await fetchOnce();
+      if (results.length === 0) {
+        await new Promise(r => setTimeout(r, 1000));
+        return fetchOnce();
+      }
+      return results;
+""",
+    """      // Empty results are final: no 1s retry inside the 6.5s budget.
+      return fetchOnce();
+""",
+    addon_root,
+)
 
 # LimeTorrents search rows already carry the info hash; the 12 detail-page
 # fetches upstream adds blow the 15s provider budget when the site is reached
