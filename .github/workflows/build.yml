@@ -22,7 +22,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       magnetio: ${{ steps.check.outputs.magnetio }}
-      cncverse: ${{ steps.check.outputs.cncverse }}
 
     steps:
       - uses: actions/checkout@v7
@@ -35,24 +34,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          for pair in magnetio=peterdsp/Magnetio cncverse=@NivinCNC/CNCVerse-Bridge; do
-            key=${pair%%=*}
-            repo=${pair#*=}
+          sha=$(gh api "repos/peterdsp/Magnetio/commits/main" --jq .sha) || {
+            echo "::warning::magnetio fetch failed"
+            exit 0
+          }
 
-            if [[ $repo == @* ]]; then
-              sha=$(gh api "repos/${repo#@}/releases/latest" --jq .tag_name) || {
-                echo "::warning::$key fetch failed"
-                continue
-              }
-            else
-              sha=$(gh api "repos/$repo/commits/main" --jq .sha) || {
-                echo "::warning::$key fetch failed"
-                continue
-              }
-            fi
-
-            grep -qx "$key=$sha" .last_shas 2>/dev/null || echo "$key=$sha" >> "$GITHUB_OUTPUT"
-          done
+          grep -qx "magnetio=$sha" .last_shas 2>/dev/null || echo "magnetio=$sha" >> "$GITHUB_OUTPUT"
 
   magnetio:
     needs: check
@@ -118,253 +105,10 @@ jobs:
           package-type: container
           min-versions-to-keep: 2
 
-  cncverse:
-    needs: check
-    if: needs.check.outputs.cncverse != ''
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          repository: NivinCNC/CNCVerse-Bridge
-          ref: ${{ needs.check.outputs.cncverse }}
-          token: ${{ secrets.PAT }}
-          path: _source
-          persist-credentials: false
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - uses: android-actions/setup-android@v4.0.4
-
-      - name: Build distributable
-        working-directory: _source
-        run: |
-          ./gradlew --no-daemon :desktopApp:createDistributable
-          APP_DIR=$(find desktopApp/build/compose/binaries -type d -path '*/app/*' | head -1)
-          test -n "$APP_DIR" || { echo "::error::distributable not found"; exit 1; }
-          cp -r "$APP_DIR" _app
-
-      - name: Write Dockerfile
-        run: |
-          rm -rf _source/.git
-          printf '%s\n' '*' '!Dockerfile' '!_app' '!_app/**' > _source/.dockerignore
-          cat > _source/Dockerfile << 'DOCKERFILE'
-          FROM ubuntu:24.04
-          RUN apt-get update \
-              && apt-get install -y --no-install-recommends \
-                 xvfb xauth ca-certificates fontconfig fonts-dejavu-core fonts-liberation libgtk-3-0 \
-                 x11vnc novnc websockify \
-                 libx11-6 libxtst6 libxrender1 libxi6 libfontconfig1 libfreetype6 \
-              && rm -rf /var/lib/apt/lists/*
-          COPY _app/ /opt/cncverse/
-          RUN BIN=$(find /opt/cncverse/bin -maxdepth 1 -type f -perm -u+x | head -1) \
-              && test -n "$BIN" \
-              && printf '#!/bin/sh\nexport DISPLAY=:99\nrm -f /tmp/.X99-lock /tmp/.X11-unix/X99\nXvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &\nsleep 2\nx11vnc -display :99 -forever -shared -rfbport 5900 -nopw -listen 0.0.0.0 -xkb >/tmp/x11vnc.log 2>&1 &\nwebsockify --web /usr/share/novnc 6080 127.0.0.1:5900 >/tmp/websockify.log 2>&1 &\nexec "%s" "$@"\n' "$BIN" > /usr/local/bin/cncverse \
-              && chmod +x /usr/local/bin/cncverse \
-              && mkdir -p /data/config /data/cache
-          ENV CNC_AUTOSTART=1 \
-              CNC_LOG_STDOUT=1 \
-              CNC_CONFIG_DIR=/data/config \
-              CNC_CACHE_DIR=/data/cache \
-              CNC_STREAM_BASE_URL=https://cnc.88221561.xyz
-          EXPOSE 8080
-          ENTRYPOINT ["cncverse"]
-          DOCKERFILE
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/build-push-action@v7
-        with:
-          context: _source
-          platforms: linux/arm64
-          push: true
-          provenance: false
-          tags: |
-            ghcr.io/jjfiecas-stack/cncverse-bridge:latest
-            ghcr.io/jjfiecas-stack/cncverse-bridge:${{ needs.check.outputs.cncverse }}
-          cache-from: type=gha,scope=cncverse-bridge
-          cache-to: type=gha,mode=max,scope=cncverse-bridge
-
-      # A failed prune must never block recording the tag, or it rebuilds every hour.
-      - uses: actions/delete-package-versions@v5
-        continue-on-error: true
-        with:
-          package-name: cncverse-bridge
-          package-type: container
-          min-versions-to-keep: 2
-
-  # One-shot: upstream v1.0.1 still had the web configure UI (removed in v1.1.0).
-  cncweb:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          repository: NivinCNC/CNCVerse-Bridge
-          ref: 9060c0fd3a23ce59e3c6eddc68e3a43552a2bc1d
-          token: ${{ secrets.PAT }}
-          path: _source
-          persist-credentials: false
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - uses: android-actions/setup-android@v4.0.4
-
-      - name: Build distributable
-        working-directory: _source
-        run: |
-          ./gradlew --no-daemon :desktopApp:createDistributable
-          APP_DIR=$(find desktopApp/build/compose/binaries -type d -path '*/app/*' | head -1)
-          test -n "$APP_DIR" || { echo "::error::distributable not found"; exit 1; }
-          cp -r "$APP_DIR" _app
-
-      - name: Write Dockerfile
-        run: |
-          rm -rf _source/.git
-          printf '%s\n' '*' '!Dockerfile' '!_app' '!_app/**' > _source/.dockerignore
-          cat > _source/Dockerfile << 'DOCKERFILE'
-          FROM ubuntu:24.04
-          RUN apt-get update \
-              && apt-get install -y --no-install-recommends \
-                 xvfb xauth ca-certificates fontconfig fonts-dejavu-core fonts-liberation libgtk-3-0 \
-                 libx11-6 libxtst6 libxrender1 libxi6 libfontconfig1 libfreetype6 \
-              && rm -rf /var/lib/apt/lists/*
-          COPY _app/ /opt/cncverse/
-          RUN BIN=$(find /opt/cncverse/bin -maxdepth 1 -type f -perm -u+x | head -1) \
-              && test -n "$BIN" \
-              && printf '#!/bin/sh\nexport DISPLAY=:99\nrm -f /tmp/.X99-lock /tmp/.X11-unix/X99\nXvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &\nsleep 2\nexec "%s" "$@"\n' "$BIN" > /usr/local/bin/cncverse \
-              && chmod +x /usr/local/bin/cncverse \
-              && mkdir -p /data/config /data/cache
-          ENV CNC_AUTOSTART=1 \
-              CNC_LOG_STDOUT=1 \
-              CNC_CONFIG_DIR=/data/config \
-              CNC_CACHE_DIR=/data/cache \
-              CNC_STREAM_BASE_URL=https://cnc.88221561.xyz
-          EXPOSE 8080
-          ENTRYPOINT ["cncverse"]
-          DOCKERFILE
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/build-push-action@v7
-        with:
-          context: _source
-          platforms: linux/arm64
-          push: true
-          provenance: false
-          tags: |
-            ghcr.io/jjfiecas-stack/cncverse-web:latest
-            ghcr.io/jjfiecas-stack/cncverse-web:v1.0.1
-          cache-from: type=gha,scope=cncverse-web
-          cache-to: type=gha,mode=max,scope=cncverse-web
-
-  # Patched build: 500-source cap, strict 6500ms stream deadline, playable-only streams.
-  cncpatched:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          repository: jjfiecas-stack/cncverse-patched
-          ref: main
-          path: _source
-          persist-credentials: false
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - uses: android-actions/setup-android@v4.0.4
-
-      - name: Build distributable
-        working-directory: _source
-        run: |
-          ./gradlew --no-daemon :desktopApp:createDistributable
-          APP_DIR=$(find desktopApp/build/compose/binaries -type d -path '*/app/*' | head -1)
-          test -n "$APP_DIR" || { echo "::error::distributable not found"; exit 1; }
-          cp -r "$APP_DIR" _app
-
-      - name: Write Dockerfile
-        run: |
-          rm -rf _source/.git
-          printf '%s\n' '*' '!Dockerfile' '!_app' '!_app/**' > _source/.dockerignore
-          cat > _source/Dockerfile << 'DOCKERFILE'
-          FROM ubuntu:24.04
-          RUN apt-get update \
-              && apt-get install -y --no-install-recommends \
-                 xvfb xauth ca-certificates fontconfig fonts-dejavu-core fonts-liberation libgtk-3-0 \
-                 libx11-6 libxtst6 libxrender1 libxi6 libfontconfig1 libfreetype6 \
-              && rm -rf /var/lib/apt/lists/*
-          COPY _app/ /opt/cncverse/
-          RUN BIN=$(find /opt/cncverse/bin -maxdepth 1 -type f -perm -u+x | head -1) \
-              && test -n "$BIN" \
-              && printf '#!/bin/sh\nexport DISPLAY=:99\nrm -f /tmp/.X99-lock /tmp/.X11-unix/X99\nXvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &\nsleep 2\nexec "%s" "$@"\n' "$BIN" > /usr/local/bin/cncverse \
-              && chmod +x /usr/local/bin/cncverse \
-              && mkdir -p /data/config /data/cache
-          ENV CNC_AUTOSTART=1 \
-              CNC_LOG_STDOUT=1 \
-              CNC_CONFIG_DIR=/data/config \
-              CNC_CACHE_DIR=/data/cache \
-              CNC_STREAM_BASE_URL=https://cnc.88221561.xyz
-          EXPOSE 8080
-          ENTRYPOINT ["cncverse"]
-          DOCKERFILE
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/build-push-action@v7
-        with:
-          context: _source
-          platforms: linux/arm64
-          push: true
-          provenance: false
-          tags: ghcr.io/jjfiecas-stack/cncverse-patched:latest
-          cache-from: type=gha,scope=cncverse-patched
-          cache-to: type=gha,mode=max,scope=cncverse-patched
-
   # One commit for everything that built, so the builds can't race on .last_shas.
   record:
-    needs: [check, magnetio, cncverse]
-    if: ${{ !cancelled() && (needs.magnetio.result == 'success' || needs.cncverse.result == 'success') }}
+    needs: [check, magnetio]
+    if: ${{ !cancelled() && needs.magnetio.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -377,8 +121,6 @@ jobs:
         env:
           MAGNETIO_RESULT: ${{ needs.magnetio.result }}
           MAGNETIO_SHA: ${{ needs.check.outputs.magnetio }}
-          CNCVERSE_RESULT: ${{ needs.cncverse.result }}
-          CNCVERSE_TAG: ${{ needs.check.outputs.cncverse }}
         run: |
           touch .last_shas
 
@@ -388,7 +130,6 @@ jobs:
           }
 
           if [ "$MAGNETIO_RESULT" = success ]; then record magnetio "$MAGNETIO_SHA"; fi
-          if [ "$CNCVERSE_RESULT" = success ]; then record cncverse "$CNCVERSE_TAG"; fi
 
           git add .last_shas
           git diff --cached --quiet && exit 0
