@@ -319,6 +319,60 @@ if overrides_file is not None:
     domains_path.write_text(domains_text)
     print(f"applied domain overrides: {', '.join(sorted(overrides))}")
 
+# Cinemeta's top catalog returns only 50 entries per page. Paginate with
+# skip=<n> so PREWARM_MOVIE_LIMIT above 50 actually fetches more titles.
+sub(
+    "lib/catalog.js",
+    """export async function fetchPopular(type, limit = 50) {
+  try {
+    const { data } = await get(`${CINEMETA_BASE}/catalog/${type}/top.json`, {
+      limiterKey: 'cinemeta',
+      responseType: 'json',
+      timeout: 15000,
+    });
+
+    const metas = data?.metas ?? [];
+
+    return metas.slice(0, limit).map(m => ({
+      // Series prewarm targets S01E01 only; other episodes get scraped on demand
+      id: type === 'series' ? `${m.imdb_id}:1:1` : m.imdb_id,
+      name: m.name,
+      type,
+    }));
+  } catch (err) {
+    logger.error(`[Catalog] Failed to fetch popular ${type}: ${err.message}`);
+    return [];
+  }
+}
+""",
+    """export async function fetchPopular(type, limit = 50) {
+  try {
+    const metas = [];
+    for (let skip = 0; skip < limit; skip += 50) {
+      const { data } = await get(`${CINEMETA_BASE}/catalog/${type}/top/skip=${skip}.json`, {
+        limiterKey: 'cinemeta',
+        responseType: 'json',
+        timeout: 15000,
+      });
+      const batch = data?.metas ?? [];
+      metas.push(...batch);
+      if (batch.length < 50) break;
+    }
+
+    return metas.slice(0, limit).map(m => ({
+      // Series prewarm targets S01E01 only; other episodes get scraped on demand
+      id: type === 'series' ? `${m.imdb_id}:1:1` : m.imdb_id,
+      name: m.name,
+      type,
+    }));
+  } catch (err) {
+    logger.error(`[Catalog] Failed to fetch popular ${type}: ${err.message}`);
+    return [];
+  }
+}
+""",
+)
+
 # Prewarm must warm the exact cache key AIOStreams asks for. Upstream always
 # writes ":all" and scrapes every provider, so prewarmed entries are never hit
 # by a config that passes an explicit provider list.
