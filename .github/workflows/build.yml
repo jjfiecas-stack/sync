@@ -5,6 +5,11 @@ on:
     - cron: '0 1-23 * * *'
     - cron: '0 0 * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if the upstream commit is unchanged
+        type: boolean
+        default: false
 
 concurrency:
   group: build-images
@@ -33,13 +38,16 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ secrets.PAT }}
+          FORCE: ${{ inputs.force }}
         run: |
           sha=$(gh api "repos/peterdsp/Magnetio/commits/main" --jq .sha) || {
             echo "::warning::magnetio fetch failed"
             exit 0
           }
 
-          grep -qx "magnetio=$sha" .last_shas 2>/dev/null || echo "magnetio=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$FORCE" = "true" ] || ! grep -qx "magnetio=$sha" .last_shas 2>/dev/null; then
+            echo "magnetio=$sha" >> "$GITHUB_OUTPUT"
+          fi
 
   magnetio:
     needs: check
@@ -53,11 +61,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          sparse-checkout: scripts/magnetio-patch.py
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/checkout@v7
+        with:
           repository: peterdsp/Magnetio
           ref: ${{ needs.check.outputs.magnetio }}
           token: ${{ secrets.PAT }}
           path: _source
           persist-credentials: false
+
+      - name: Patch scraper for current mirrors
+        run: python3 scripts/magnetio-patch.py _source/scraper
 
       - uses: docker/login-action@v4
         with:
