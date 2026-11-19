@@ -319,6 +319,28 @@ if overrides_file is not None:
     domains_path.write_text(domains_text)
     print(f"applied domain overrides: {', '.join(sorted(overrides))}")
 
+# Prewarm must warm the exact cache key AIOStreams asks for. Upstream always
+# writes ":all" and scrapes every provider, so prewarmed entries are never hit
+# by a config that passes an explicit provider list.
+sub(
+    "lib/prewarm.js",
+    "const CACHE_TTL    = parseInt(process.env.PREWARM_CACHE_TTL ?? '14400', 10);",
+    """const CACHE_TTL    = parseInt(process.env.PREWARM_CACHE_TTL ?? '14400', 10);
+const PROVIDERS    = (process.env.PREWARM_PROVIDERS ?? '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+const PROVIDER_KEY = PROVIDERS.join(',') || 'all';""",
+)
+sub(
+    "lib/prewarm.js",
+    "  const cacheKey = `streams:${type}:${id}:all`;",
+    "  const cacheKey = `streams:${type}:${id}:${PROVIDER_KEY}`;",
+)
+sub(
+    "lib/prewarm.js",
+    "  const streams = await scrapeAll(type, meta);",
+    "  const streams = await scrapeAll(type, meta, PROVIDERS.length ? PROVIDERS : null);",
+)
+
 # LimeTorrents search rows already carry the info hash; the 12 detail-page
 # fetches upstream adds blow the 15s provider budget when the site is reached
 # through WARP. Use the hash from the row and skip the detail round-trip.
