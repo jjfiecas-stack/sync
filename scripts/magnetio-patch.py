@@ -12,10 +12,11 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "_source/scraper")
+addon_root = root.parent / "addon"
 
 
-def sub(path, old, new):
-    p = root / path
+def sub(path, old, new, base=None):
+    p = (base if base is not None else root) / path
     text = p.read_text()
     if new in text:
         print(f"already patched: {p}")
@@ -240,6 +241,41 @@ function extractInfoHash(magnet) {
   return match ? match[1].toLowerCase() : null;
 }
 ''',
+)
+
+# AIOStreams drops an addon response after ~6.5s. Upstream resolves up to 20
+# cached debrid streams, four at a time, with an 8s per-stream timeout, so a
+# cold response takes 30-45s. Bound the work and parallelise it instead.
+sub(
+    "moch/moch.js",
+    "const RESOLVE_TIMEOUT_MS = 8_000;",
+    "const RESOLVE_TIMEOUT_MS = 2_200;",
+    addon_root,
+)
+sub(
+    "moch/moch.js",
+    "const resolveLimit = pLimit(4);",
+    "const resolveLimit = pLimit(10);",
+    addon_root,
+)
+sub(
+    "moch/moch.js",
+    """          streams
+            .filter(stream => stream.infoHash && cachedMap.has(stream.infoHash?.toLowerCase()))
+            .map(stream => resolveLimit(async () => {""",
+    """          streams
+            .filter(stream => stream.infoHash && cachedMap.has(stream.infoHash?.toLowerCase()))
+            .slice(0, 10)
+            .map(stream => resolveLimit(async () => {""",
+    addon_root,
+)
+# TorBox readiness polling sleeps 2s between checks; halve the poll interval
+# and cap retries so cached torrents resolve inside the latency budget.
+sub(
+    "moch/torbox.js",
+    "async function _waitForReady(torrentId, apiKey, retries = 10, delayMs = 2000)",
+    "async function _waitForReady(torrentId, apiKey, retries = 8, delayMs = 250)",
+    addon_root,
 )
 
 # LimeTorrents search rows already carry the info hash; the 12 detail-page
