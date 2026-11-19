@@ -61,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          sparse-checkout: scripts/magnetio-patch.py
+          sparse-checkout: scripts/
           sparse-checkout-cone-mode: false
 
       - uses: actions/checkout@v7
