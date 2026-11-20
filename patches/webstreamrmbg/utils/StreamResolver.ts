@@ -22,8 +22,6 @@ const UNPLAYABLE_EXTRACTOR_IDS = new Set([
   'vixsrc',
   'vixcloud',
   'supervideo',
-  'hubcloud_direct',
-  'streamembed',
   'uqload',
 ]);
 
@@ -35,6 +33,7 @@ const isPlayableCandidate = (urlResult: UrlResult): boolean => {
   if (urlResult.error || urlResult.isExternal) return false;
   const extractorId = urlResult.meta?.extractorId ?? '';
   const sourceId = urlResult.meta?.sourceId ?? '';
+  if (extractorId === 'hubcloud_direct' && sourceId !== 'hdhub4u') return false;
   return !UNPLAYABLE_EXTRACTOR_IDS.has(extractorId) && !UNPLAYABLE_SOURCE_IDS.has(sourceId);
 };
 
