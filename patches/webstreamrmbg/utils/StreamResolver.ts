@@ -207,9 +207,8 @@ export class StreamResolver {
           title: this.buildTitle(ctx, urlResult),
           behaviorHints: {
             bingeGroup: `webstreamr-mbg-${urlResult.meta?.sourceId}-${urlResult.meta?.extractorId}-${urlResult.meta?.countryCodes?.join('_')}`,
-            ...(urlResult.format !== Format.mp4 && urlResult.notWebReady !== false && { notWebReady: true }),
+            ...(urlResult.format !== Format.mp4 && urlResult.notWebReady !== false && { notWebReady: false }),
             ...(urlResult.requestHeaders !== undefined && {
-              notWebReady: true,
               proxyHeaders: { request: urlResult.requestHeaders },
             }),
             ...(urlResult.meta?.bytes && { videoSize: urlResult.meta.bytes }),
