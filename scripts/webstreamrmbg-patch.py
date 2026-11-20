@@ -9,9 +9,10 @@ from pathlib import Path
 root = Path(sys.argv[1])
 patch_root = Path(__file__).resolve().parent.parent / 'patches' / 'webstreamrmbg'
 
-for patch in sorted((patch_root / 'source').glob('*.ts')):
-    target = root / 'src' / 'source' / patch.name
-    if not target.is_file():
-        raise SystemExit(f'missing patch target: {target}')
-    shutil.copyfile(patch, target)
-    print(f'patched {target.name}')
+for subdir in ('source', 'utils'):
+    for patch in sorted((patch_root / subdir).glob('*.ts')):
+        target = root / 'src' / subdir / patch.name
+        if not target.is_file():
+            raise SystemExit(f'missing patch target: {target}')
+        shutil.copyfile(patch, target)
+        print(f'patched {subdir}/{target.name}')
