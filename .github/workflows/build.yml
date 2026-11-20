@@ -27,7 +27,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       magnetio: ${{ steps.check.outputs.magnetio }}
-      webstreamrmbg: ${{ steps.check.outputs.webstreamrmbg }}
 
     steps:
       - uses: actions/checkout@v7
@@ -48,15 +47,6 @@ jobs:
 
           if [ "$FORCE" = "true" ] || ! grep -qx "magnetio=$sha" .last_shas 2>/dev/null; then
             echo "magnetio=$sha" >> "$GITHUB_OUTPUT"
-          fi
-
-          ws_sha=$(gh api "repos/newman2x/WebStreamrMBG/commits/main" --jq .sha) || {
-            echo "::warning::webstreamrmbg fetch failed"
-            exit 0
-          }
-
-          if [ "$FORCE" = "true" ] || ! grep -qx "webstreamrmbg=$ws_sha" .last_shas 2>/dev/null; then
-            echo "webstreamrmbg=$ws_sha" >> "$GITHUB_OUTPUT"
           fi
 
   magnetio:
@@ -131,67 +121,10 @@ jobs:
           package-type: container
           min-versions-to-keep: 2
 
-  webstreamrmbg:
-    needs: check
-    if: needs.check.outputs.webstreamrmbg != ''
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          sparse-checkout: |
-            docker/webstreamrmbg/Dockerfile
-            scripts/webstreamrmbg-patch.py
-            patches/webstreamrmbg/
-          sparse-checkout-cone-mode: false
-
-      - uses: actions/checkout@v7
-        with:
-          repository: newman2x/WebStreamrMBG
-          ref: ${{ needs.check.outputs.webstreamrmbg }}
-          token: ${{ secrets.PAT }}
-          path: _source
-          persist-credentials: false
-
-      - name: Patch dead source domains
-        run: python3 scripts/webstreamrmbg-patch.py _source
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/build-push-action@v7
-        with:
-          context: _source
-          file: ${{ github.workspace }}/docker/webstreamrmbg/Dockerfile
-          platforms: linux/arm64
-          push: true
-          provenance: false
-          tags: |
-            ghcr.io/jjfiecas-stack/webstreamrmbg:latest
-            ghcr.io/jjfiecas-stack/webstreamrmbg:${{ needs.check.outputs.webstreamrmbg }}
-          cache-from: type=gha,scope=webstreamrmbg
-          cache-to: type=gha,mode=max,scope=webstreamrmbg
-
-      - uses: actions/delete-package-versions@v5
-        continue-on-error: true
-        with:
-          package-name: webstreamrmbg
-          package-type: container
-          min-versions-to-keep: 2
-
   # One commit for everything that built, so the builds can't race on .last_shas.
   record:
-    needs: [check, magnetio, webstreamrmbg]
-    if: ${{ !cancelled() && (needs.magnetio.result == 'success' || needs.webstreamrmbg.result == 'success') }}
+    needs: [check, magnetio]
+    if: ${{ !cancelled() && needs.magnetio.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -204,8 +137,6 @@ jobs:
         env:
           MAGNETIO_RESULT: ${{ needs.magnetio.result }}
           MAGNETIO_SHA: ${{ needs.check.outputs.magnetio }}
-          WEBSTREAMRMBG_RESULT: ${{ needs.webstreamrmbg.result }}
-          WEBSTREAMRMBG_SHA: ${{ needs.check.outputs.webstreamrmbg }}
         run: |
           touch .last_shas
 
@@ -215,7 +146,6 @@ jobs:
           }
 
           if [ "$MAGNETIO_RESULT" = success ]; then record magnetio "$MAGNETIO_SHA"; fi
-          if [ "$WEBSTREAMRMBG_RESULT" = success ]; then record webstreamrmbg "$WEBSTREAMRMBG_SHA"; fi
 
           git add .last_shas
           git diff --cached --quiet && exit 0
