@@ -9,7 +9,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 patch_root = Path(__file__).resolve().parent.parent / 'patches' / 'webstreamrmbg'
 
-for subdir in ('source', 'utils'):
+for subdir in ('source', 'utils', 'extractor'):
     for patch in sorted((patch_root / subdir).glob('*.ts')):
         target = root / 'src' / subdir / patch.name
         if not target.is_file():
