@@ -17,6 +17,26 @@ interface ResolveResponse {
   ttl?: number;
 }
 
+const UNPLAYABLE_EXTRACTOR_IDS = new Set([
+  'fastream',
+  'vixsrc',
+  'vixcloud',
+  'supervideo',
+  'hubcloud_direct',
+  'streamembed',
+]);
+
+const UNPLAYABLE_SOURCE_IDS = new Set([
+  'vidsrc',
+]);
+
+const isPlayableCandidate = (urlResult: UrlResult): boolean => {
+  if (urlResult.error || urlResult.isExternal) return false;
+  const extractorId = urlResult.meta?.extractorId ?? '';
+  const sourceId = urlResult.meta?.sourceId ?? '';
+  return !UNPLAYABLE_EXTRACTOR_IDS.has(extractorId) && !UNPLAYABLE_SOURCE_IDS.has(sourceId);
+};
+
 export class StreamResolver {
   private readonly logger: winston.Logger;
   private readonly extractorRegistry: ExtractorRegistry;
@@ -39,6 +59,7 @@ export class StreamResolver {
       };
     }
 
+    const playableOnly = (envGet('PLAYABLE_ONLY') ?? '1') !== '0';
     const budgetMs = parseInt(envGet('STREAM_BUDGET_MS') ?? '', 10) || 6000;
     const deadline = Date.now() + budgetMs;
     let expired = false;
@@ -104,7 +125,7 @@ export class StreamResolver {
           sourceErrorCount++;
         });
 
-        if (!expired && showErrors(ctx.config)) {
+        if (!expired && showErrors(ctx.config) && !playableOnly) {
           streams.push({
             name: envGetAppName(),
             title: [`🔗 ${source.label}`, logErrorAndReturnNiceString(ctx, this.logger, source.id, error)].join('\n'),
@@ -173,7 +194,8 @@ export class StreamResolver {
     this.logger.info(`Got ${urlResults.length} url results, including ${errorCount} errors`, ctx);
 
     streams.push(
-      ...urlResults.filter(urlResult => (!urlResult.error || showErrors(ctx.config)) && !isResolutionExcluded(ctx.config, getClosestResolution(urlResult.meta?.height)))
+      ...urlResults.filter(urlResult => !playableOnly || isPlayableCandidate(urlResult))
+        .filter(urlResult => (!urlResult.error || showErrors(ctx.config)) && !isResolutionExcluded(ctx.config, getClosestResolution(urlResult.meta?.height)))
         .filter((urlResult, index, self) =>
           // Remove duplicate URLs
           index === self.findIndex(t => t.url.href === urlResult.url.href),
