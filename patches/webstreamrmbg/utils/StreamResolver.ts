@@ -24,6 +24,7 @@ const UNPLAYABLE_EXTRACTOR_IDS = new Set([
   'supervideo',
   'hubcloud_direct',
   'streamembed',
+  'uqload',
 ]);
 
 const UNPLAYABLE_SOURCE_IDS = new Set([
